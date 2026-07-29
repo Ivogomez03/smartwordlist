@@ -28,7 +28,8 @@ func GenerateCombos(dictWords []string, contextWords []string, mutate func(strin
 
 	emit := func(w string) {
 		w = strings.TrimSpace(w)
-		if w == "" || seen[w] {
+		// Skip candidates with whitespace — they can't be passwords.
+		if w == "" || seen[w] || strings.ContainsAny(w, " \t\n\r") {
 			return
 		}
 		seen[w] = true

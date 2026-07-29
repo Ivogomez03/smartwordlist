@@ -132,7 +132,13 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 
 	var b strings.Builder
 	b.WriteString("You are a password generation assistant for authorized security assessments.\n")
-	b.WriteString("Generate password candidates using common corporate patterns.\n\n")
+	b.WriteString("Your task is to think carefully and generate HIGH-QUALITY, REALISTIC password\n")
+	b.WriteString("candidates that actual employees of this company might use.\n\n")
+	b.WriteString("Think about:\n")
+	b.WriteString("- How would an employee combine the company name with common patterns?\n")
+	b.WriteString("- What default passwords might their IT department set?\n")
+	b.WriteString("- How would they combine tech stack names with seasons or years?\n")
+	b.WriteString("- What keyboard patterns or memorable phrases might they use?\n\n")
 
 	if company != "" {
 		b.WriteString(fmt.Sprintf("Company: %s\n", company))
@@ -143,27 +149,14 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 	if len(keywords) > 0 {
 		b.WriteString(fmt.Sprintf("Keywords: %s\n", strings.Join(dedupeSlice(keywords), ", ")))
 	}
-	if len(paths) > 0 {
-		// Truncate paths to avoid excessive prompt length.
-		shown := paths
-		if len(shown) > 10 {
-			shown = shown[:10]
-		}
-		b.WriteString(fmt.Sprintf("Paths: %s\n", strings.Join(dedupeSlice(shown), ", ")))
-	}
 
-	b.WriteString("\nPassword patterns to use:\n")
-	b.WriteString("- company name + year (e.g. Acme2026)\n")
-	b.WriteString("- product or technology + number or symbol\n")
-	b.WriteString("- keyword with leet substitutions\n")
-	b.WriteString("- combinations of company, product, and season words\n")
-	b.WriteString("- common corporate suffix/prefix patterns\n\n")
-
-	b.WriteString("Rules:\n")
-	b.WriteString("- Output ONE password per line.\n")
-	b.WriteString("- Do NOT number or bullet the lines.\n")
-	b.WriteString("- Do NOT include explanations — only the password.\n")
-	b.WriteString("- Generate at least 50 candidates.\n")
+	b.WriteString("\nRules:\n")
+	b.WriteString("- Output exactly ONE password per line — nothing else.\n")
+	b.WriteString("- Do NOT number the lines. No bullets, no explanations.\n")
+	b.WriteString("- Generate at least 200 candidates.\n")
+	b.WriteString("- Every candidate MUST be a single word (no spaces).\n")
+	b.WriteString("- Use the current year (2026) and surrounding years.\n")
+	b.WriteString("- Prioritize realism over quantity — think like a real employee.\n")
 
 	return b.String()
 }

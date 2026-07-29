@@ -3,6 +3,7 @@ package generation
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/Ivogomez03/smartwordlist/pkg/types"
 )
@@ -91,6 +92,10 @@ func (rg *RuleGenerator) collectWords() []string {
 	}
 
 	add(r.Company)
+	// Also split multi-word company names into individual tokens.
+	for _, part := range strings.Fields(r.Company) {
+		add(part)
+	}
 	for _, t := range r.Technologies {
 		add(t)
 	}

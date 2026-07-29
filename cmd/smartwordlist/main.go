@@ -77,7 +77,7 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.Flags().StringP("output", "o", "", "Output file path (default: stdout)")
-	rootCmd.Flags().IntP("max", "m", 0, "Maximum candidates to generate (0 = unlimited)")
+	rootCmd.Flags().IntP("max", "m", 2000, "Maximum candidates to generate")
 	rootCmd.Flags().BoolP("verbose", "v", false, "Verbose output")
 	rootCmd.Flags().Bool("no-llm", false, "Disable LLM-enhanced generation (rule-only mode)")
 	rootCmd.Flags().StringP("rules", "r", "defaults/rules.yaml", "Path to mutation rules YAML file")
@@ -669,6 +669,11 @@ func enrichCandidates(
 		var dictWords []string
 		for _, words := range dicts {
 			dictWords = append(dictWords, words...)
+		}
+		// Cap dictionary words to avoid combinatorial explosion — the top
+		// entries cover the most common patterns.
+		if len(dictWords) > 100 {
+			dictWords = dictWords[:100]
 		}
 
 		ctxWords := extractContextWords(reconResult)
