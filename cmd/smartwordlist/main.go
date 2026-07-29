@@ -266,11 +266,11 @@ func run(cmd *cobra.Command, args []string) error {
 
 		candidatesCh <- allCandidates
 
-		// Stage 3: Enrichment (mutation + dictionary combos)
+		// Stage 3: Enrichment (mutation + optional dictionary combos)
 		go func() {
 			candidates := <-candidatesCh
 			enriched, allSources, mutationCount, comboCount := enrichCandidates(
-				candidates, reconResult, mutEngine, dicts, max, verbose,
+				candidates, reconResult, mutEngine, dicts, max, verbose, llmMode,
 			)
 			// Merge sources from generation stage.
 			for _, s := range sourcesUsed {
@@ -630,6 +630,7 @@ func enrichCandidates(
 	dicts map[string][]string,
 	max int,
 	verbose bool,
+	skipCombos bool,
 ) ([]types.Candidate, []string, int, int) {
 	allCandidates := make([]types.Candidate, len(baseCandidates))
 	copy(allCandidates, baseCandidates)
@@ -663,17 +664,19 @@ func enrichCandidates(
 	}
 
 	// ---- Dictionary combinations ----
+	// Skip combos in LLM mode — the model should be the primary source.
+	// Combos are only useful in rule-only mode as a fallback.
 	comboStart := time.Now()
 	comboCount := 0
-	{
+	if !skipCombos {
 		var dictWords []string
 		for _, words := range dicts {
 			dictWords = append(dictWords, words...)
 		}
 		// Cap dictionary words to avoid combinatorial explosion — the top
 		// entries cover the most common patterns.
-		if len(dictWords) > 100 {
-			dictWords = dictWords[:100]
+		if len(dictWords) > 50 {
+			dictWords = dictWords[:50]
 		}
 
 		ctxWords := extractContextWords(reconResult)

@@ -58,6 +58,7 @@ func (lg *LLMGenerator) Generate(ctx context.Context, chunks []types.ScoredChunk
 					continue
 				}
 				// Strip leading numbering the model may add (e.g. "28. password").
+				orig := cand
 				cand = llmNumberPrefix.ReplaceAllString(cand, "")
 				cand = strings.TrimSpace(cand)
 				if cand == "" {
@@ -74,6 +75,7 @@ func (lg *LLMGenerator) Generate(ctx context.Context, chunks []types.ScoredChunk
 				if max > 0 && len(candidates) >= max {
 					return candidates[:max], nil
 				}
+				_ = orig
 			} else {
 				lineBuf.WriteRune(r)
 			}
@@ -175,7 +177,6 @@ func extractValue(text string) string {
 func skipLLMLine(line string) bool {
 	lower := strings.ToLower(line)
 	return strings.HasPrefix(lower, "here are") ||
-		strings.HasPrefix(lower, "password") ||
 		strings.HasPrefix(lower, "candidate") ||
 		strings.Contains(lower, "sorry") ||
 		strings.Contains(lower, "i cannot") ||
