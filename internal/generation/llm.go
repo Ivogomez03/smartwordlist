@@ -121,7 +121,9 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 		case "technologies":
 			tech = append(tech, extractValue(c.Text))
 		case "keywords":
-			keywords = append(keywords, extractValue(c.Text))
+			if v := extractValue(c.Text); v != "" && !strings.Contains(v, ".") {
+				keywords = append(keywords, v)
+			}
 		case "paths":
 			paths = append(paths, extractValue(c.Text))
 		default:

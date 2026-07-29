@@ -737,7 +737,8 @@ func extractContextWords(r *types.ReconResult) []string {
 	// for the LLM, not material for mutation. Nobody uses "nginx" as a password.
 	for _, kw := range r.Keywords {
 		kw = strings.ToLower(strings.TrimSpace(kw))
-		if len(kw) > 2 && !isJunkWord(kw) {
+		// Skip domain-like keywords — they produce junk passwords.
+		if len(kw) > 2 && !isJunkWord(kw) && !strings.Contains(kw, ".") {
 			words = append(words, kw)
 		}
 	}
@@ -840,17 +841,11 @@ func dedupeStrings(ss []string) []string {
 }
 
 // isJunkCandidate returns true for candidates that are obviously not
-// real passwords: those containing spaces or domain-like patterns.
+// real passwords.
 func isJunkCandidate(w string) bool {
-	if strings.ContainsAny(w, " \t\n\r") {
-		return true
-	}
-	lower := strings.ToLower(w)
-	return strings.Contains(lower, ".com") ||
-		strings.Contains(lower, ".ar") ||
-		strings.Contains(lower, ".org") ||
-		strings.Contains(lower, ".net") ||
-		strings.Contains(lower, "www.")
+	// Only filter spaces — domain patterns are too risky to filter blindly.
+	// Better to fix the input data than filter the output.
+	return strings.ContainsAny(w, " \t\n\r")
 }
 
 func joinStrings(ss []string, sep string) string {
