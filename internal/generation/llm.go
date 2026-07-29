@@ -133,32 +133,32 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("You are a password generation assistant for authorized security assessments.\n")
-	b.WriteString("Your task is to think carefully and generate HIGH-QUALITY, REALISTIC password\n")
-	b.WriteString("candidates that actual employees of this company might use.\n\n")
-	b.WriteString("Think about:\n")
-	b.WriteString("- How would an employee combine the company name with common patterns?\n")
-	b.WriteString("- What default passwords might their IT department set?\n")
-	b.WriteString("- How would they combine tech stack names with seasons or years?\n")
-	b.WriteString("- What keyboard patterns or memorable phrases might they use?\n\n")
+	b.WriteString("Generate realistic password candidates for this company.\n")
+	b.WriteString("Think like an employee choosing a memorable but secure-enough password.\n\n")
 
 	if company != "" {
-		b.WriteString(fmt.Sprintf("Company: %s\n", company))
+		// Split company name into parts so the model can use them individually.
+		parts := strings.Fields(company)
+		b.WriteString(fmt.Sprintf("Company: %s", company))
+		if len(parts) > 1 {
+			b.WriteString(fmt.Sprintf(" (parts: %s)", strings.Join(parts, ", ")))
+		}
+		b.WriteString("\n")
 	}
 	if len(tech) > 0 {
-		b.WriteString(fmt.Sprintf("Technologies: %s\n", strings.Join(dedupeSlice(tech), ", ")))
+		b.WriteString(fmt.Sprintf("Tech: %s\n", strings.Join(dedupeSlice(tech), ", ")))
 	}
 	if len(keywords) > 0 {
-		b.WriteString(fmt.Sprintf("Keywords: %s\n", strings.Join(dedupeSlice(keywords), ", ")))
+		b.WriteString(fmt.Sprintf("Context: %s\n", strings.Join(dedupeSlice(keywords), ", ")))
 	}
 
-	b.WriteString("\nRules:\n")
-	b.WriteString("- Output exactly ONE password per line — nothing else.\n")
-	b.WriteString("- Do NOT number the lines. No bullets, no explanations.\n")
+	b.WriteString("\nExamples of good passwords for a ski resort named Cerro Bayo:\n")
+	b.WriteString("CerroBayo2026, BayoAdmin2026!, Niev3Patagonia, CBAdmin2026\n\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- ONE password per line, no numbers/bullets/explanations.\n")
+	b.WriteString("- NO spaces, NO dots, NO URLs — passwords are single words.\n")
+	b.WriteString("- Use the company name parts, tech terms, and year 2026.\n")
 	b.WriteString("- Generate at least 200 candidates.\n")
-	b.WriteString("- Every candidate MUST be a single word (no spaces).\n")
-	b.WriteString("- Use the current year (2026) and surrounding years.\n")
-	b.WriteString("- Prioritize realism over quantity — think like a real employee.\n")
 
 	return b.String()
 }

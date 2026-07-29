@@ -24,6 +24,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -301,9 +302,21 @@ func run(cmd *cobra.Command, args []string) error {
 	// ---- Scoring + Dedup ----
 
 	phaseCh <- "Scoring and exporting"
+
+	// Filter obvious junk before scoring.
+	filtered := make([]types.Candidate, 0, len(enriched.candidates))
+	for _, c := range enriched.candidates {
+		if !isJunkCandidate(c.Word) {
+			filtered = append(filtered, c)
+		}
+	}
+	if verbose && len(filtered) < len(enriched.candidates) {
+		fmt.Println(cli.Info(fmt.Sprintf("Filtered %d junk candidates", len(enriched.candidates)-len(filtered))))
+	}
+
 	scorer := scoring.NewScorer()
 	totalRaw := enriched.totalGenerated + enriched.mutationCount + enriched.comboCount
-	scored := scorer.Score(enriched.candidates)
+	scored := scorer.Score(filtered)
 	deduped := scorer.Deduplicate(scored)
 
 	// Stabilise sort after dedup.
@@ -705,26 +718,73 @@ func enrichCandidates(
 }
 
 // extractContextWords builds a list of contextual words from the recon result
-// for dictionary combination.
+// for dictionary combination. Subdomains are split into their prefix parts
+// (e.g. "www.example.com" → "www") and the apex domain is filtered out.
+// Company names are split into individual words.
 func extractContextWords(r *types.ReconResult) []string {
 	if r == nil {
 		return nil
 	}
 	var words []string
-	if r.Company != "" {
-		words = append(words, r.Company)
-	}
-	if r.Title != "" {
-		words = append(words, r.Title)
+	// Split company name into individual words.
+	for _, part := range strings.Fields(r.Company) {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if len(part) > 2 && !isJunkWord(part) {
+			words = append(words, part)
+		}
 	}
 	for _, t := range r.Technologies {
-		words = append(words, t)
+		t = cleanTechWord(t)
+		if t != "" && !isJunkWord(t) {
+			words = append(words, strings.ToLower(t))
+		}
 	}
-	words = append(words, r.Keywords...)
+	for _, kw := range r.Keywords {
+		kw = strings.ToLower(strings.TrimSpace(kw))
+		if len(kw) > 2 && !isJunkWord(kw) {
+			words = append(words, kw)
+		}
+	}
+	// Subdomains: only keep the prefix part, not the full FQDN.
 	for _, sd := range r.Subdomains {
-		words = append(words, sd)
+		prefix, _, _ := strings.Cut(sd, ".")
+		prefix = strings.ToLower(strings.TrimSpace(prefix))
+		if prefix != "" && prefix != "www" && len(prefix) > 2 && !isJunkWord(prefix) {
+			words = append(words, prefix)
+		}
 	}
 	return dedupeStrings(words)
+}
+
+// isJunkWord returns true for words that are too generic to be useful
+// as password base words.
+func isJunkWord(w string) bool {
+	junk := map[string]bool{
+		"the": true, "and": true, "for": true, "new": true, "all": true,
+		"our": true, "its": true, "has": true, "are": true, "was": true,
+		"can": true, "not": true, "you": true, "your": true, "from": true,
+		"that": true, "this": true, "with": true, "have": true, "been": true,
+		"will": true, "more": true, "page": true, "home": true, "site": true,
+		"need": true, "run": true, "app": true, "api": true, "use": true,
+		"get": true, "one": true, "two": true, "see": true, "now": true,
+		"com": true, "org": true, "net": true, "www": true,
+		"enable": true, "javascript": true, "cookie": true, "function": true,
+	}
+	return junk[strings.ToLower(strings.TrimSpace(w))]
+}
+
+// cleanTechWord strips version numbers and common prefixes from technology names.
+func cleanTechWord(t string) string {
+	t = strings.TrimSpace(t)
+	// Strip version numbers: "nginx/1.24" → "nginx", "jquery/3.7" → "jquery"
+	if idx := strings.Index(t, "/"); idx > 0 {
+		t = t[:idx]
+	}
+	// Split compound tech names: "Google Analytics" → "google", "analytics"
+	// Return the first meaningful word.
+	t = strings.SplitN(t, " ", 2)[0]
+	t = strings.SplitN(t, "/", 2)[0]
+	return strings.ToLower(strings.TrimSpace(t))
 }
 
 // buildQueryText creates a search query from the most relevant recon fields.
@@ -781,6 +841,20 @@ func dedupeStrings(ss []string) []string {
 		}
 	}
 	return out
+}
+
+// isJunkCandidate returns true for candidates that are obviously not
+// real passwords: those containing spaces or domain-like patterns.
+func isJunkCandidate(w string) bool {
+	if strings.ContainsAny(w, " \t\n\r") {
+		return true
+	}
+	lower := strings.ToLower(w)
+	return strings.Contains(lower, ".com") ||
+		strings.Contains(lower, ".ar") ||
+		strings.Contains(lower, ".org") ||
+		strings.Contains(lower, ".net") ||
+		strings.Contains(lower, "www.")
 }
 
 func joinStrings(ss []string, sep string) string {

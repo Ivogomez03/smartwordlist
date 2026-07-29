@@ -103,7 +103,11 @@ func (rg *RuleGenerator) collectWords() []string {
 		add(k)
 	}
 	for _, sd := range r.Subdomains {
-		add(sd)
+		// Only use the subdomain prefix, not the full FQDN.
+		prefix, _, found := strings.Cut(sd, ".")
+		if found && prefix != "" && prefix != "www" {
+			add(prefix)
+		}
 	}
 	// Extract meaningful segments from path fragments.
 	for _, p := range r.Paths {
