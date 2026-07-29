@@ -3,11 +3,16 @@ package generation
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/Ivogomez03/smartwordlist/internal/ollama"
 	"github.com/Ivogomez03/smartwordlist/pkg/types"
 )
+
+// llmNumberPrefix matches lines that the model numbered despite being told
+// not to — e.g. "28. RonBarceloBrandCenter2024" or "15) somepassword".
+var llmNumberPrefix = regexp.MustCompile(`^\d+[.)]\s*`)
 
 // LLMGenerator produces password candidates by sending a RAG-enhanced prompt
 // to an Ollama language model and parsing the streaming response line by
@@ -49,6 +54,12 @@ func (lg *LLMGenerator) Generate(ctx context.Context, chunks []types.ScoredChunk
 			if r == '\n' {
 				cand := strings.TrimSpace(lineBuf.String())
 				lineBuf.Reset()
+				if cand == "" {
+					continue
+				}
+				// Strip leading numbering the model may add (e.g. "28. password").
+				cand = llmNumberPrefix.ReplaceAllString(cand, "")
+				cand = strings.TrimSpace(cand)
 				if cand == "" {
 					continue
 				}

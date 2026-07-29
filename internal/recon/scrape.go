@@ -226,9 +226,9 @@ func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
 		)
 
 		// HTTP header-based tech detection
-		for headerKey, label := range headerTechKeys {
+		for headerKey := range headerTechKeys {
 			if val := r.Headers.Get(headerKey); val != "" {
-				result.Technologies = append(result.Technologies, label+": "+val)
+				result.Technologies = append(result.Technologies, val)
 			}
 		}
 

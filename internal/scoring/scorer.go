@@ -48,7 +48,16 @@ func NewScorer() *Scorer {
 // score descending (highest probability first).  Candidates with equal scores
 // are ordered by descending word length as a secondary tiebreaker.
 func (s *Scorer) Score(candidates []types.Candidate) []types.ScoredCandidate {
-	out := make([]types.ScoredCandidate, 0, len(candidates))
+	// Filter out candidates with whitespace — they can't be passwords.
+	filtered := make([]types.Candidate, 0, len(candidates))
+	for _, c := range candidates {
+		if strings.ContainsAny(c.Word, " \t\n\r") {
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+
+	out := make([]types.ScoredCandidate, 0, len(filtered))
 	for _, c := range candidates {
 		sc := s.computeScore(c)
 		out = append(out, types.ScoredCandidate{
