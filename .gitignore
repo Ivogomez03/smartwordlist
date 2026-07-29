@@ -6,7 +6,7 @@
 *.dll
 *.so
 *.dylib
-smartwordlist
+/smartwordlist
 /bin/
 /dist/
 
