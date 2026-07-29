@@ -190,8 +190,16 @@ func run(cmd *cobra.Command, args []string) error {
 
 	rules, err := plugin.LoadRulesFile(rulesPath)
 	if err != nil {
-		close(doneCh)
-		return fmt.Errorf("load rules: %w", err)
+		// If the default rules file is missing (common with go install),
+		// fall back to the embedded copy compiled into the binary.
+		if rulesPath == "defaults/rules.yaml" {
+			fmt.Println(cli.Warning("Default rules file not found — using embedded rules"))
+			rules, err = plugin.LoadDefaultRules()
+		}
+		if err != nil {
+			close(doneCh)
+			return fmt.Errorf("load rules: %w", err)
+		}
 	}
 	mutEngine := generation.NewMutationEngine(rules)
 

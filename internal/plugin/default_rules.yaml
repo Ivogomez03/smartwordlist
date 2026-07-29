@@ -1,0 +1,40 @@
+# SmartWordlist Default Mutation Rules
+# Customize by passing --rules <path> to override any section.
+
+leet_map:
+  a:
+    - "4"
+    - "@"
+  e:
+    - "3"
+  i:
+    - "1"
+    - "!"
+  o:
+    - "0"
+  s:
+    - "5"
+    - "$"
+  t:
+    - "7"
+
+suffixes:
+  - "123"
+  - "!"
+  - "@"
+  - "2026"
+  - "2025"
+  - "2024"
+
+prefixes:
+  - "admin_"
+  - "dev_"
+
+year_range:
+  start: 2015
+  end: 2026
+
+case_variations:
+  - lower
+  - upper
+  - title
