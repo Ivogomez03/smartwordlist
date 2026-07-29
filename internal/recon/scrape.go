@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gocolly/colly/v2"
 )
@@ -128,6 +129,17 @@ func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
 	)
 	if scrapeTransport != nil {
 		c.WithTransport(scrapeTransport)
+	} else {
+		// Force HTTP/1.1 to avoid Go's TLS fingerprint being detected
+		// by WAFs (Cloudflare, etc.) that block Go's HTTP/2 handshake.
+		c.WithTransport(&http.Transport{
+			ForceAttemptHTTP2:     false,
+			TLSHandshakeTimeout:   10 * time.Second,
+			DisableKeepAlives:     false,
+			MaxIdleConns:          5,
+			IdleConnTimeout:       30 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		})
 	}
 
 	result := &scrapeResult{}
