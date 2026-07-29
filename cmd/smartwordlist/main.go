@@ -733,12 +733,8 @@ func extractContextWords(r *types.ReconResult) []string {
 			words = append(words, part)
 		}
 	}
-	for _, t := range r.Technologies {
-		t = cleanTechWord(t)
-		if t != "" && !isJunkWord(t) {
-			words = append(words, strings.ToLower(t))
-		}
-	}
+	// Technologies are NOT used as password base words — they're context
+	// for the LLM, not material for mutation. Nobody uses "nginx" as a password.
 	for _, kw := range r.Keywords {
 		kw = strings.ToLower(strings.TrimSpace(kw))
 		if len(kw) > 2 && !isJunkWord(kw) {

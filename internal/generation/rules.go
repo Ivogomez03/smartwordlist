@@ -96,9 +96,8 @@ func (rg *RuleGenerator) collectWords() []string {
 	for _, part := range strings.Fields(r.Company) {
 		add(part)
 	}
-	for _, t := range r.Technologies {
-		add(t)
-	}
+	// Technologies are NOT used as base words — they're context for the LLM,
+	// not something people put in passwords.
 	for _, k := range r.Keywords {
 		add(k)
 	}

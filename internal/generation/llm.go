@@ -157,8 +157,8 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 	b.WriteString("Rules:\n")
 	b.WriteString("- ONE password per line, no numbers/bullets/explanations.\n")
 	b.WriteString("- NO spaces, NO dots, NO URLs — passwords are single words.\n")
-	b.WriteString("- Use the company name parts, tech terms, and year 2026.\n")
-	b.WriteString("- Generate at least 200 candidates.\n")
+	b.WriteString("- Use the company name parts, relevant keywords, and year 2026.\n")
+	b.WriteString("- Generate at least 300 candidates. Be creative and varied.\n")
 
 	return b.String()
 }
