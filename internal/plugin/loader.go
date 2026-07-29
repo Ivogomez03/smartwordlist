@@ -11,7 +11,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
 
-	"github.com/gentleman-programming/smartwordlist/internal/generation"
+	"github.com/Ivogomez03/smartwordlist/internal/generation"
 )
 
 // knownRuleKeys defines the valid top-level keys in a rules file. Any key

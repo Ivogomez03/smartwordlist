@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/gentleman-programming/smartwordlist/internal/ollama"
+	"github.com/Ivogomez03/smartwordlist/internal/ollama"
 )
 
 // OllamaEmbedder generates embedding vectors using an Ollama model. It

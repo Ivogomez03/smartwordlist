@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/gentleman-programming/smartwordlist/pkg/types"
+	"github.com/Ivogomez03/smartwordlist/pkg/types"
 )
 
 // Exporter writes scored candidates to text or JSON output.  Callers are

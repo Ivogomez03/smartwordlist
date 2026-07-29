@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/gentleman-programming/smartwordlist/pkg/types"
+	"github.com/Ivogomez03/smartwordlist/pkg/types"
 )
 
 // RuleGenerator produces password candidates purely through rule-based

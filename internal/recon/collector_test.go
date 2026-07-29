@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gentleman-programming/smartwordlist/pkg/types"
+	"github.com/Ivogomez03/smartwordlist/pkg/types"
 )
 
 func TestReconCollector_Collect(t *testing.T) {

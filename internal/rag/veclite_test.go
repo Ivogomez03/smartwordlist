@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/gentleman-programming/smartwordlist/pkg/types"
+	"github.com/Ivogomez03/smartwordlist/pkg/types"
 )
 
 func TestVecliteStore_IndexAndSearch(t *testing.T) {

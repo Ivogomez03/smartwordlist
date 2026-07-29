@@ -1,4 +1,4 @@
-module github.com/gentleman-programming/smartwordlist
+module github.com/Ivogomez03/smartwordlist
 
 go 1.25.0
 

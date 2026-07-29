@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gentleman-programming/smartwordlist/internal/ollama"
-	"github.com/gentleman-programming/smartwordlist/pkg/types"
+	"github.com/Ivogomez03/smartwordlist/internal/ollama"
+	"github.com/Ivogomez03/smartwordlist/pkg/types"
 )
 
 // LLMGenerator produces password candidates by sending a RAG-enhanced prompt

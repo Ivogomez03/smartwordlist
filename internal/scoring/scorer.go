@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/gentleman-programming/smartwordlist/pkg/types"
+	"github.com/Ivogomez03/smartwordlist/pkg/types"
 )
 
 // sourceWeights maps candidate source labels (lowercased) to base scores on a

@@ -142,7 +142,7 @@ type Exporter interface {
 | `pkg/dict/data/common.txt` | Create | Embedded common password dictionary |
 | `pkg/dict/data/seasons.txt` | Create | Embedded season/year/pattern dictionary |
 | `defaults/rules.yaml` | Create | Default mutation rules: leet map, suffixes, prefixes, year range |
-| `go.mod` | Create | Module `github.com/gentleman-programming/smartwordlist` |
+| `go.mod` | Create | Module `github.com/Ivogomez03/smartwordlist` |
 
 ## Testing Strategy
 

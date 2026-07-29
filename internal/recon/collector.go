@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/gentleman-programming/smartwordlist/pkg/types"
+	"github.com/Ivogomez03/smartwordlist/pkg/types"
 )
 
 // ReconCollector orchestrates all reconnaissance sub-collectors and

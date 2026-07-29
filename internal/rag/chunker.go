@@ -6,7 +6,7 @@ package rag
 import (
 	"strings"
 
-	"github.com/gentleman-programming/smartwordlist/pkg/types"
+	"github.com/Ivogomez03/smartwordlist/pkg/types"
 )
 
 // Chunker splits a ReconResult into semantic text chunks suitable for

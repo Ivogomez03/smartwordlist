@@ -7,7 +7,7 @@ Generate contextual password wordlists for authorized security assessments.
 ### From source
 
 ```bash
-git clone https://github.com/gentleman-programming/smartwordlist.git
+git clone https://github.com/Ivogomez03/smartwordlist.git
 cd smartwordlist
 go install ./cmd/smartwordlist
 ```
@@ -15,7 +15,7 @@ go install ./cmd/smartwordlist
 ### go install
 
 ```bash
-go install github.com/gentleman-programming/smartwordlist/cmd/smartwordlist@latest
+go install github.com/Ivogomez03/smartwordlist/cmd/smartwordlist@latest
 ```
 
 Requires **Go 1.23+**.

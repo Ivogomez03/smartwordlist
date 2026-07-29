@@ -3,7 +3,7 @@ package scoring
 import (
 	"testing"
 
-	"github.com/gentleman-programming/smartwordlist/pkg/types"
+	"github.com/Ivogomez03/smartwordlist/pkg/types"
 )
 
 func TestScorer_Score_SourceWeighting(t *testing.T) {

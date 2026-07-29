@@ -18,7 +18,7 @@ PR slices (stacked-to-main or feature-branch-chain, tracker `feat/smartwordlist`
 
 ## Phase 1: Foundation (PR 1)
 
-- [x] 1.1 Create `go.mod` — module `github.com/gentleman-programming/smartwordlist`, Go 1.23+, deps colly/cobra/viper/lipgloss/bubbletea/veclite/chroma/yaml.v3
+- [x] 1.1 Create `go.mod` — module `github.com/Ivogomez03/smartwordlist`, Go 1.23+, deps colly/cobra/viper/lipgloss/bubbletea/veclite/chroma/yaml.v3
 - [x] 1.2 Create `pkg/types/config.go` — `Config`, `ReconResult`, `Candidate`, `ScoredCandidate`, `Chunk`, `ScoredChunk`, `Stats` types
 - [x] 1.3 Create `internal/cli/styles.go` — Lip Gloss banner, sqlmap theme, progress
 - [x] 1.4 Create `defaults/rules.yaml` — leet map, suffixes, prefixes, year range 2015–2026

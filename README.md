@@ -4,14 +4,14 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.0-blue)](https://github.com/gentleman-programming/smartwordlist)
+[![Version](https://img.shields.io/badge/version-0.1.0-blue)](https://github.com/Ivogomez03/smartwordlist)
 
 SmartWordlist combines **reconnaissance**, **RAG (Retrieval-Augmented Generation)**, and **local LLM generation** to produce targeted password wordlists for penetration testing and red team engagements.
 
 ## Quick Install
 
 ```bash
-go install github.com/gentleman-programming/smartwordlist/cmd/smartwordlist@latest
+go install github.com/Ivogomez03/smartwordlist/cmd/smartwordlist@latest
 ```
 
 ## Quick Example
