@@ -1,0 +1,21 @@
+.atl/
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+smartwordlist
+/bin/
+/dist/
+
+# Go dependency cache
+/vendor/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

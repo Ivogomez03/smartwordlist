@@ -1,0 +1,351 @@
+package recon
+
+import (
+	"context"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/gocolly/colly/v2"
+)
+
+// scrapeResult holds the structured output of a single HTML scrape pass.
+type scrapeResult struct {
+	Title        string
+	Company      string
+	Keywords     []string
+	Technologies []string
+	Emails       []string
+}
+
+// emailRegex matches RFC 5322-ish email addresses found in page text.
+// It is intentionally simpler than the full spec to avoid noise.
+var emailRegex = regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`)
+
+// techScriptPatterns maps substrings found in <script src> attributes to a
+// human-readable technology label.
+var techScriptPatterns = map[string]string{
+	"react":            "React",
+	"react-dom":        "React",
+	"vue":              "Vue.js",
+	"jquery":           "jQuery",
+	"bootstrap":        "Bootstrap",
+	"angular":          "Angular",
+	"next":             "Next.js",
+	"nuxt":             "Nuxt.js",
+	"svelte":           "Svelte",
+	"alpine":           "Alpine.js",
+	"htmx":             "HTMX",
+	"lodash":           "Lodash",
+	"moment":           "Moment.js",
+	"d3":               "D3.js",
+	"three":            "Three.js",
+	"chart":            "Chart.js",
+	"tailwind":         "Tailwind CSS",
+	"font-awesome":     "Font Awesome",
+	"google-analytics": "Google Analytics",
+	"gtag":             "Google Analytics",
+	"googletagmanager": "Google Tag Manager",
+	"gtm":              "Google Tag Manager",
+}
+
+// headerTechKeys maps HTTP response header names to the technology label
+// recorded when the header is present.
+var headerTechKeys = map[string]string{
+	"x-powered-by": "X-Powered-By",
+	"server":       "Server",
+	"x-generator":  "X-Generator",
+}
+
+// cookieTechPatterns maps cookie-name substrings to technology labels.
+var cookieTechPatterns = map[string]string{
+	"laravel_session":  "Laravel",
+	"wordpress":        "WordPress",
+	"wp-":              "WordPress",
+	"PHPSESSID":        "PHP",
+	"JSESSIONID":       "Java",
+	"ASP.NET_SessionId": "ASP.NET",
+	"cfduid":           "Cloudflare",
+	"__cf":             "Cloudflare",
+}
+
+// stopWords is a compact set of common English words filtered during
+// keyword extraction.
+var stopWords = map[string]struct{}{
+	"the": {}, "a": {}, "an": {}, "and": {}, "or": {}, "but": {}, "in": {},
+	"on": {}, "at": {}, "to": {}, "for": {}, "of": {}, "with": {}, "by": {},
+	"from": {}, "is": {}, "are": {}, "was": {}, "were": {}, "be": {}, "been": {},
+	"being": {}, "have": {}, "has": {}, "had": {}, "do": {}, "does": {}, "did": {},
+	"will": {}, "would": {}, "could": {}, "should": {}, "may": {}, "might": {},
+	"can": {}, "shall": {}, "this": {}, "that": {}, "these": {}, "those": {},
+	"it": {}, "its": {}, "we": {}, "you": {}, "they": {}, "he": {}, "she": {},
+	"not": {}, "no": {}, "all": {}, "each": {}, "every": {}, "both": {},
+	"few": {}, "more": {}, "most": {}, "other": {}, "some": {}, "such": {},
+	"only": {}, "own": {}, "same": {}, "so": {}, "than": {}, "too": {},
+	"very": {}, "just": {}, "about": {}, "above": {}, "after": {}, "again": {},
+	"against": {}, "between": {}, "into": {}, "through": {}, "during": {},
+	"before": {}, "below": {}, "up": {}, "down": {}, "out": {}, "off": {},
+	"over": {}, "under": {}, "here": {}, "there": {}, "when": {}, "where": {},
+	"why": {}, "how": {}, "what": {}, "which": {}, "who": {}, "whom": {},
+	"then": {}, "now": {}, "also": {}, "if": {}, "else": {}, "i": {},
+	"me": {}, "my": {}, "myself": {}, "our": {}, "ours": {}, "your": {},
+	"yours": {}, "his": {}, "her": {}, "hers": {}, "itself": {},
+	"themselves": {}, "am": {}, "hadn": {}, "hasn": {}, "haven": {},
+	"isn": {}, "aren": {}, "wasn": {}, "weren": {}, "don": {}, "doesn": {},
+	"didn": {}, "won": {}, "wouldn": {}, "shouldn": {}, "couldn": {},
+	"mustn": {}, "needn": {}, "mightn": {}, "shan": {},
+	"further": {}, "once": {}, "get": {}, "got": {}, "one": {}, "two": {},
+	"three": {}, "four": {}, "five": {}, "any": {}, "make": {}, "made": {},
+	"see": {}, "use": {}, "used": {}, "using": {}, "know": {}, "take": {},
+	"like": {}, "well": {}, "back": {}, "still": {}, "even": {}, "much": {},
+	"way": {}, "new": {}, "first": {}, "last": {}, "many": {}, "good": {},
+	"great": {}, "work": {}, "year": {}, "years": {}, "time": {}, "day": {},
+	"days": {}, "people": {}, "find": {}, "found": {}, "give": {}, "given": {},
+	"come": {}, "came": {}, "go": {}, "went": {}, "going": {}, "page": {},
+	"site": {}, "website": {}, "http": {}, "https": {}, "www": {},
+	"com": {}, "org": {}, "net": {}, "html": {}, "css": {}, "js": {},
+	"copyright": {}, "rights": {}, "reserved": {}, "privacy": {}, "policy": {},
+	"terms": {}, "conditions": {}, "contact": {}, "home": {}, "help": {},
+}
+
+// titleCompanySeps defines separator characters that commonly split a
+// company name from a page section hint in <title> text.
+var titleCompanySeps = []string{" | ", " - ", " — ", " · ", " :: ", " : "}
+
+// scrapeHTML fetches the domain's homepage with colly and extracts
+// title, company name, keywords, detected technologies, and email addresses.
+func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
+	c := colly.NewCollector(
+		colly.UserAgent("SmartWordlist/0.1 (security-research)"),
+	)
+
+	result := &scrapeResult{}
+	var bodyBuilder strings.Builder
+	var rawBodyBuilder strings.Builder
+
+	// ---- HTML callbacks ----
+
+	c.OnHTML("title", func(e *colly.HTMLElement) {
+		result.Title = strings.TrimSpace(e.Text)
+	})
+
+	c.OnHTML("meta[name=description]", func(e *colly.HTMLElement) {
+		bodyBuilder.WriteString(" " + e.Attr("content"))
+	})
+
+	c.OnHTML("meta[property='og:site_name']", func(e *colly.HTMLElement) {
+		if result.Company == "" {
+			result.Company = strings.TrimSpace(e.Attr("content"))
+		}
+	})
+
+	// og:title as title fallback
+	c.OnHTML("meta[property='og:title']", func(e *colly.HTMLElement) {
+		if result.Title == "" {
+			result.Title = strings.TrimSpace(e.Attr("content"))
+		}
+	})
+
+	c.OnHTML("body", func(e *colly.HTMLElement) {
+		bodyBuilder.WriteString(" " + e.Text)
+	})
+
+	c.OnHTML("meta[name=generator]", func(e *colly.HTMLElement) {
+		if tech := strings.TrimSpace(e.Attr("content")); tech != "" {
+			result.Technologies = append(result.Technologies, tech)
+		}
+	})
+
+	c.OnHTML("script[src]", func(e *colly.HTMLElement) {
+		src := strings.ToLower(e.Attr("src"))
+		for pattern, label := range techScriptPatterns {
+			if strings.Contains(src, pattern) {
+				result.Technologies = append(result.Technologies, label)
+			}
+		}
+	})
+
+	// ---- response callback ----
+
+	c.OnResponse(func(r *colly.Response) {
+		rawBodyBuilder.WriteString(string(r.Body))
+
+		// HTTP header-based tech detection
+		for headerKey, label := range headerTechKeys {
+			if val := r.Headers.Get(headerKey); val != "" {
+				result.Technologies = append(result.Technologies, label+": "+val)
+			}
+		}
+
+		// Cookie-based tech detection
+		cookies := r.Headers.Values("Set-Cookie")
+		for _, cookie := range cookies {
+			lowerCookie := strings.ToLower(cookie)
+			for pattern, label := range cookieTechPatterns {
+				if strings.Contains(lowerCookie, strings.ToLower(pattern)) {
+					result.Technologies = append(result.Technologies, label)
+				}
+			}
+		}
+
+		// Extract emails from raw HTML body
+		result.Emails = append(result.Emails, emailRegex.FindAllString(string(r.Body), -1)...)
+	})
+
+	// ---- error callback ----
+
+	c.OnError(func(r *colly.Response, err error) {
+		// Errors are logged implicitly via the error return from Visit.
+		// We don't abort here so colly can still process partial responses.
+	})
+
+	// ---- visit ----
+
+	url := "https://" + domain
+	if err := c.Visit(url); err != nil {
+		return nil, err
+	}
+
+	// ---- post-processing (callbacks already fired) ----
+
+	// Keyword extraction from visible text
+	result.Keywords = extractKeywords(bodyBuilder.String(), 30)
+
+	// Company name heuristics (only if og:site_name was absent)
+	if result.Company == "" {
+		result.Company = extractCompanyFromTitle(result.Title)
+	}
+	if result.Company == "" {
+		result.Company = extractCompanyFromCopyright(rawBodyBuilder.String())
+	}
+
+	// Deduplicate
+	result.Technologies = deduplicateStrings(result.Technologies)
+	result.Keywords = deduplicateStrings(result.Keywords)
+	result.Emails = deduplicateStrings(result.Emails)
+
+	return result, nil
+}
+
+// extractKeywords tokenises visible page text, strips stopwords, and returns
+// the n most frequent words longer than 2 characters.
+func extractKeywords(text string, n int) []string {
+	words := tokenize(text)
+	freq := make(map[string]int, len(words))
+
+	for _, w := range words {
+		lower := strings.ToLower(w)
+		if len(lower) <= 2 {
+			continue
+		}
+		if _, stop := stopWords[lower]; stop {
+			continue
+		}
+		// Skip purely numeric tokens
+		if isNumeric(lower) {
+			continue
+		}
+		freq[lower]++
+	}
+
+	type kv struct {
+		word  string
+		count int
+	}
+
+	sorted := make([]kv, 0, len(freq))
+	for w, c := range freq {
+		sorted = append(sorted, kv{w, c})
+	}
+
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].count > sorted[j].count
+	})
+
+	if n > len(sorted) {
+		n = len(sorted)
+	}
+
+	result := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		result = append(result, sorted[i].word)
+	}
+
+	return result
+}
+
+// tokenize splits text on non-letter boundaries and returns clean tokens.
+func tokenize(text string) []string {
+	// Normalise whitespace and split on non-letter sequences.
+	re := regexp.MustCompile(`[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ0-9]+`)
+	parts := re.Split(text, -1)
+
+	tokens := make([]string, 0, len(parts))
+	for _, p := range parts {
+		t := strings.TrimSpace(p)
+		if t != "" {
+			tokens = append(tokens, t)
+		}
+	}
+	return tokens
+}
+
+// isNumeric reports whether s contains only digit characters.
+func isNumeric(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+// extractCompanyFromTitle attempts to pull a company name from the first
+// segment of a <title> that uses common separator characters.
+func extractCompanyFromTitle(title string) string {
+	if title == "" {
+		return ""
+	}
+
+	for _, sep := range titleCompanySeps {
+		if idx := strings.Index(title, sep); idx > 0 {
+			return strings.TrimSpace(title[:idx])
+		}
+	}
+	// If no separator is found, return the whole title as the company hint.
+	return strings.TrimSpace(title)
+}
+
+// extractCompanyFromCopyright scans raw HTML body text for copyright notices
+// and extracts the organisation name.
+func extractCompanyFromCopyright(body string) string {
+	// Look for © or "Copyright" followed by a year then company name.
+	crPattern := regexp.MustCompile(`(?i)(?:©|copyright)\s*(?:\d{4}(?:\s*[-–—]\s*\d{4})?\s+)?([A-Z][A-Za-z0-9\s,&.]+?)(?:\s*(?:All\s+Rights\s+Reserved|\.|$))`)
+	matches := crPattern.FindStringSubmatch(body)
+	if len(matches) >= 2 {
+		name := strings.TrimSpace(matches[1])
+		if len(name) > 2 {
+			return name
+		}
+	}
+	return ""
+}
+
+// deduplicateStrings removes duplicate entries from a slice, preserving
+// the order of first occurrence.
+func deduplicateStrings(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(s))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}

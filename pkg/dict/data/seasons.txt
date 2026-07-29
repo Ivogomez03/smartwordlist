@@ -1,0 +1,53 @@
+# seasons.txt — embedded dictionary of seasons, months, and years.
+# Kept as atomic tokens; the mutation engine handles case, combinations,
+# prefixes, and suffixes.
+# One word per line. Lines starting with '#' are ignored.
+
+# Seasons
+spring
+summer
+autumn
+fall
+winter
+
+# Months
+january
+february
+march
+april
+may
+june
+july
+august
+september
+october
+november
+december
+
+# Month abbreviations
+jan
+feb
+mar
+apr
+jun
+jul
+aug
+sep
+sept
+oct
+nov
+dec
+
+# Year range (2015 through 2026 as standalone atoms)
+2015
+2016
+2017
+2018
+2019
+2020
+2021
+2022
+2023
+2024
+2025
+2026
