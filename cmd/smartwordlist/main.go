@@ -229,6 +229,10 @@ func run(cmd *cobra.Command, args []string) error {
 		if verbose {
 			fmt.Println(cli.Info(fmt.Sprintf("Recon completed in %v", time.Since(phaseStart))))
 		}
+		// Warn if recon returned no useful data — downstream stages need it.
+		if result.Title == "" && result.Company == "" && len(result.Keywords) == 0 {
+			fmt.Println(cli.Warning("Reconnaissance returned no useful data — the site may be blocking the request or require JavaScript. Wordlist will be generic."))
+		}
 		reconResultCh <- result
 	}()
 

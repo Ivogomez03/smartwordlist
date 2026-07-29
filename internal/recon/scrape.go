@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -123,7 +124,7 @@ var scrapeTransport http.RoundTripper
 // title, company name, keywords, detected technologies, and email addresses.
 func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
 	c := colly.NewCollector(
-		colly.UserAgent("SmartWordlist/0.1 (security-research)"),
+		colly.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
 	)
 	if scrapeTransport != nil {
 		c.WithTransport(scrapeTransport)
@@ -139,24 +140,29 @@ func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
 	var visitErr error
 	var responseReceived bool
 	var statusCode int
+	var htmlCallbacksFired int
 
 	// ---- HTML callbacks ----
 
 	c.OnHTML("title", func(e *colly.HTMLElement) {
+		htmlCallbacksFired++
 		result.Title = strings.TrimSpace(e.Text)
 	})
 
 	c.OnHTML("meta[name=description]", func(e *colly.HTMLElement) {
+		htmlCallbacksFired++
 		bodyBuilder.WriteString(" " + e.Attr("content"))
 	})
 
 	c.OnHTML("meta[name=author]", func(e *colly.HTMLElement) {
+		htmlCallbacksFired++
 		if result.Company == "" {
 			result.Company = strings.TrimSpace(e.Attr("content"))
 		}
 	})
 
 	c.OnHTML("meta[property='og:site_name']", func(e *colly.HTMLElement) {
+		htmlCallbacksFired++
 		if result.Company == "" {
 			result.Company = strings.TrimSpace(e.Attr("content"))
 		}
@@ -164,22 +170,26 @@ func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
 
 	// og:title as title fallback
 	c.OnHTML("meta[property='og:title']", func(e *colly.HTMLElement) {
+		htmlCallbacksFired++
 		if result.Title == "" {
 			result.Title = strings.TrimSpace(e.Attr("content"))
 		}
 	})
 
 	c.OnHTML("body", func(e *colly.HTMLElement) {
+		htmlCallbacksFired++
 		bodyBuilder.WriteString(" " + e.Text)
 	})
 
 	c.OnHTML("meta[name=generator]", func(e *colly.HTMLElement) {
+		htmlCallbacksFired++
 		if tech := strings.TrimSpace(e.Attr("content")); tech != "" {
 			result.Technologies = append(result.Technologies, tech)
 		}
 	})
 
 	c.OnHTML("script[src]", func(e *colly.HTMLElement) {
+		htmlCallbacksFired++
 		src := strings.ToLower(e.Attr("src"))
 		for pattern, label := range techScriptPatterns {
 			if strings.Contains(src, pattern) {
@@ -194,6 +204,14 @@ func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
 		responseReceived = true
 		statusCode = r.StatusCode
 		rawBodyBuilder.WriteString(string(r.Body))
+
+		// Diagnostic: log what we received so the user can debug.
+		fmt.Fprintf(os.Stderr, "[recon] HTTP %d | Content-Type: %s | Body: %d bytes | URL: %s\n",
+			r.StatusCode,
+			r.Headers.Get("Content-Type"),
+			len(r.Body),
+			r.Request.URL.String(),
+		)
 
 		// HTTP header-based tech detection
 		for headerKey, label := range headerTechKeys {
@@ -226,6 +244,8 @@ func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
 		if r != nil {
 			statusCode = r.StatusCode
 		}
+		// Diagnostic so the user sees what happened.
+		fmt.Fprintf(os.Stderr, "[recon] error: %v (HTTP %d)\n", err, statusCode)
 	})
 
 	// ---- visit ----
@@ -269,6 +289,11 @@ func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
 	result.Technologies = deduplicateStrings(result.Technologies)
 	result.Keywords = deduplicateStrings(result.Keywords)
 	result.Emails = deduplicateStrings(result.Emails)
+
+	// Diagnostic: report what was extracted.
+	fmt.Fprintf(os.Stderr, "[recon] HTML callbacks: %d | Title: %q | Company: %q | Keywords: %d | Techs: %d | Emails: %d\n",
+		htmlCallbacksFired, result.Title, result.Company,
+		len(result.Keywords), len(result.Technologies), len(result.Emails))
 
 	return result, nil
 }

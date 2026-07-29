@@ -86,10 +86,15 @@ func (rc *ReconCollector) Collect(ctx context.Context, domain string) (*types.Re
 
 	wg.Wait()
 
+	// Surface warnings from individual collectors so the user knows what
+	// happened even when partial data is available.
+	for _, e := range errs {
+		fmt.Printf("[recon] collector warning: %v\n", e)
+	}
+
 	// If every sub-collector failed, surface the combined errors.
-	// Otherwise, return the partial result (this is by design).
 	if len(errs) == 3 {
-		return nil, fmt.Errorf("all collectors failed: %v", errs)
+		return result, fmt.Errorf("all collectors failed: %v", errs)
 	}
 
 	return result, nil
