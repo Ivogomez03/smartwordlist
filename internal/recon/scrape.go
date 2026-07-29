@@ -2,6 +2,8 @@ package recon
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"regexp"
 	"sort"
 	"strings"
@@ -112,16 +114,31 @@ var stopWords = map[string]struct{}{
 // company name from a page section hint in <title> text.
 var titleCompanySeps = []string{" | ", " - ", " — ", " · ", " :: ", " : "}
 
+// scrapeTransport is the http.RoundTripper used by colly collectors created
+// by scrapeHTML. Tests may override it to inject httptest transports or
+// disable TLS verification.
+var scrapeTransport http.RoundTripper
+
 // scrapeHTML fetches the domain's homepage with colly and extracts
 // title, company name, keywords, detected technologies, and email addresses.
 func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
 	c := colly.NewCollector(
 		colly.UserAgent("SmartWordlist/0.1 (security-research)"),
 	)
+	if scrapeTransport != nil {
+		c.WithTransport(scrapeTransport)
+	}
 
 	result := &scrapeResult{}
 	var bodyBuilder strings.Builder
 	var rawBodyBuilder strings.Builder
+
+	// Track whether the request actually succeeded. colly's Visit returns
+	// nil when OnError is set — even on failures — so we must capture the
+	// error and response status ourselves.
+	var visitErr error
+	var responseReceived bool
+	var statusCode int
 
 	// ---- HTML callbacks ----
 
@@ -131,6 +148,12 @@ func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
 
 	c.OnHTML("meta[name=description]", func(e *colly.HTMLElement) {
 		bodyBuilder.WriteString(" " + e.Attr("content"))
+	})
+
+	c.OnHTML("meta[name=author]", func(e *colly.HTMLElement) {
+		if result.Company == "" {
+			result.Company = strings.TrimSpace(e.Attr("content"))
+		}
 	})
 
 	c.OnHTML("meta[property='og:site_name']", func(e *colly.HTMLElement) {
@@ -168,6 +191,8 @@ func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
 	// ---- response callback ----
 
 	c.OnResponse(func(r *colly.Response) {
+		responseReceived = true
+		statusCode = r.StatusCode
 		rawBodyBuilder.WriteString(string(r.Body))
 
 		// HTTP header-based tech detection
@@ -193,17 +218,38 @@ func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
 	})
 
 	// ---- error callback ----
+	// Must capture the error explicitly because colly suppresses it from
+	// Visit() when any OnError handler is registered.
 
 	c.OnError(func(r *colly.Response, err error) {
-		// Errors are logged implicitly via the error return from Visit.
-		// We don't abort here so colly can still process partial responses.
+		visitErr = err
+		if r != nil {
+			statusCode = r.StatusCode
+		}
 	})
 
 	// ---- visit ----
 
 	url := "https://" + domain
-	if err := c.Visit(url); err != nil {
-		return nil, err
+	cVisitErr := c.Visit(url)
+
+	// Prefer the status-aware error when available; colly's Visit error on
+	// HTTP failures is just "Internal Server Error" without the code.
+	if statusCode >= 300 {
+		cVisitErr = fmt.Errorf("HTTP %d", statusCode)
+	}
+	if cVisitErr != nil {
+		return nil, fmt.Errorf("scrape %s: %w", domain, cVisitErr)
+	}
+
+	// Surface OnError-captured errors (connection refused, TLS, DNS).
+	if visitErr != nil {
+		return nil, fmt.Errorf("scrape %s: %w", domain, visitErr)
+	}
+
+	// Defensive: if we never received a response, something went wrong.
+	if !responseReceived {
+		return nil, fmt.Errorf("scrape %s: no response received", domain)
 	}
 
 	// ---- post-processing (callbacks already fired) ----
@@ -317,10 +363,18 @@ func extractCompanyFromTitle(title string) string {
 }
 
 // extractCompanyFromCopyright scans raw HTML body text for copyright notices
-// and extracts the organisation name.
+// and extracts the organisation name. Both "© 2024 Name" and "Copyright 2024
+// Name" forms are recognised. A year (or year range) is required between the
+// marker and the company name to reduce false positives.
 func extractCompanyFromCopyright(body string) string {
-	// Look for © or "Copyright" followed by a year then company name.
-	crPattern := regexp.MustCompile(`(?i)(?:©|copyright)\s*(?:\d{4}(?:\s*[-–—]\s*\d{4})?\s+)?([A-Z][A-Za-z0-9\s,&.]+?)(?:\s*(?:All\s+Rights\s+Reserved|\.|$))`)
+	crPattern := regexp.MustCompile(
+		`(?i)(?:©|copyright)\s*` + // marker
+			`\d{4}` + // year (required — avoids matching "no copyright here")
+			`(?:\s*[-–—]\s*\d{4})?` + // optional year range
+			`\s+` +
+			`([A-ZÁÉÍÓÚÜÑ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9\s,&.]+?)` + // company name
+			`(?:\s*(?:All\s+Rights\s+Reserved|\.|$))`,
+	)
 	matches := crPattern.FindStringSubmatch(body)
 	if len(matches) >= 2 {
 		name := strings.TrimSpace(matches[1])
