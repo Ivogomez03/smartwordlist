@@ -1,1 +1,1 @@
-# brutteForceBasedOnIA
+# bruteForceBasedOnIA
