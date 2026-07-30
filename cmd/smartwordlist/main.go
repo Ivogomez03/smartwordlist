@@ -51,8 +51,11 @@ const defaultOllamaModel = "qwen3:0.6b"
 // defaultEmbedModel is the embedding model for RAG vector search.
 const defaultEmbedModel = "nomic-embed-text"
 
-// pipelineTimeout is the maximum total pipeline duration.
-const pipelineTimeout = 5 * time.Minute
+// pipelineTimeout is the default maximum total pipeline duration.
+// Increased to 10 minutes because loading an 8B+ model on constrained
+// hardware (MacBook Air, low RAM) can take 5+ minutes on first run.
+// Override with --pipeline-timeout or SMARTWORDLIST_PIPELINE_TIMEOUT.
+const defaultPipelineTimeout = 10 * time.Minute
 
 // domainRegex is the validation pattern for domain names and IP addresses.
 // It accepts bare domains (example.com), subdomains (www.example.com),
@@ -88,6 +91,7 @@ func init() {
 	rootCmd.Flags().String("embedding-model", envOrDefault("SMARTWORDLIST_EMBED_MODEL", defaultEmbedModel), "Ollama embedding model name")
 	rootCmd.Flags().Bool("dry-run-ollama", false, "Check Ollama health and model availability, then exit")
 	rootCmd.Flags().Duration("ollama-timeout", 0, "Ollama HTTP client timeout (0 = default 300s, env: SMARTWORDLIST_OLLAMA_TIMEOUT)")
+	rootCmd.Flags().Duration("pipeline-timeout", 0, "Maximum total pipeline duration (0 = default 10m, env: SMARTWORDLIST_PIPELINE_TIMEOUT)")
 }
 
 func run(cmd *cobra.Command, args []string) error {
@@ -113,6 +117,18 @@ func run(cmd *cobra.Command, args []string) error {
 				ollamaTimeout = parsed
 			}
 		}
+	}
+
+	pipelineTimeout, _ := cmd.Flags().GetDuration("pipeline-timeout")
+	if pipelineTimeout == 0 {
+		if envVal := os.Getenv("SMARTWORDLIST_PIPELINE_TIMEOUT"); envVal != "" {
+			if parsed, err := time.ParseDuration(envVal); err == nil {
+				pipelineTimeout = parsed
+			}
+		}
+	}
+	if pipelineTimeout == 0 {
+		pipelineTimeout = defaultPipelineTimeout
 	}
 
 	// Auto-derive JSON path from output when not explicitly set.
