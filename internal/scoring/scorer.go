@@ -100,7 +100,12 @@ func (s *Scorer) computeScore(c types.Candidate) float64 {
 		cb += 0.5
 	}
 
-	return base + lb + cb
+	raw := base + lb + cb
+
+	// Apply predictability penalty before clamping.
+	raw -= penalizePredictable(c.Word)
+
+	return raw
 }
 
 // clamp bounds v to [0, 10].
@@ -164,4 +169,56 @@ func mixedCase(s string) bool {
 		}
 	}
 	return false
+}
+
+// penalizePredictable returns a penalty (0.0 to -3.0) for predictable
+// password patterns: year suffixes, trailing single symbols, long digit
+// sequences, and common weak number patterns like "123" or "000".
+func penalizePredictable(word string) float64 {
+	var penalty float64
+	lower := strings.ToLower(word)
+
+	// Penalize year suffixes (e.g., "word2026", "word2025").
+	if len(lower) > 4 {
+		suffix := lower[len(lower)-4:]
+		if suffix >= "2015" && suffix <= "2030" {
+			penalty += 1.5
+		}
+	}
+
+	// Penalize common single-char suffixes (!, @, #, $).
+	if len(lower) > 1 {
+		last := lower[len(lower)-1]
+		if last == '!' || last == '@' || last == '#' || last == '$' {
+			penalty += 0.5
+		}
+	}
+
+	// Penalize sequences of 3+ digits.
+	digitSeq := 0
+	for _, r := range lower {
+		if r >= '0' && r <= '9' {
+			digitSeq++
+		} else {
+			if digitSeq >= 3 {
+				penalty += 0.5
+			}
+			digitSeq = 0
+		}
+	}
+	if digitSeq >= 3 {
+		penalty += 0.5
+	}
+
+	// Penalize common weak number patterns.
+	commonNums := []string{"123", "1234", "12345", "123456", "000", "111", "222",
+		"333", "444", "555", "666", "777", "888", "999", "0000", "1111", "2222"}
+	for _, num := range commonNums {
+		if strings.Contains(lower, num) {
+			penalty += 0.5
+			break
+		}
+	}
+
+	return penalty
 }

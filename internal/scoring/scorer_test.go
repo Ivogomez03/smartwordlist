@@ -129,21 +129,23 @@ func TestScorer_Score_AllSameScore(t *testing.T) {
 	candidates := []types.Candidate{
 		{Word: "short", Source: "dict"},
 		{Word: "shorter", Source: "dict"},
-		{Word: "short123", Source: "dict"},
+		{Word: "short99", Source: "dict"},
 	}
 
 	scored := scorer.Score(candidates)
 
 	// All have same source weight, so scores should differ only by length bonus
-	// and pattern complexity. "short123" has digits → complexity bonus.
+	// and pattern complexity. "short99" has digits → complexity bonus, and
+	// avoids predictable patterns like "123" that would incur a penalty.
 	// Order: higher score → longer word tiebreaker for same score.
 	if len(scored) != 3 {
 		t.Fatalf("expected 3 results, got %d", len(scored))
 	}
 
-	// "short123" should have highest score (digit bonus + longest)
-	if scored[0].Word != "short123" {
-		t.Errorf("expected short123 first (highest complexity), got %s", scored[0].Word)
+	// "short99" should have highest score (digit bonus + no predictable penalty).
+	if scored[0].Word != "short99" {
+		t.Errorf("expected short99 first (highest complexity, no penalty), got %s (%.2f)",
+			scored[0].Word, scored[0].Score)
 	}
 }
 

@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -86,6 +87,7 @@ func init() {
 	rootCmd.Flags().String("model", envOrDefault("SMARTWORDLIST_MODEL", defaultOllamaModel), "Ollama LLM model name")
 	rootCmd.Flags().String("embedding-model", envOrDefault("SMARTWORDLIST_EMBED_MODEL", defaultEmbedModel), "Ollama embedding model name")
 	rootCmd.Flags().Bool("dry-run-ollama", false, "Check Ollama health and model availability, then exit")
+	rootCmd.Flags().Duration("ollama-timeout", 0, "Ollama HTTP client timeout (0 = default 120s, env: SMARTWORDLIST_OLLAMA_TIMEOUT)")
 }
 
 func run(cmd *cobra.Command, args []string) error {
@@ -103,6 +105,15 @@ func run(cmd *cobra.Command, args []string) error {
 	modelName, _ := cmd.Flags().GetString("model")
 	embedModel, _ := cmd.Flags().GetString("embedding-model")
 	dryRunOllama, _ := cmd.Flags().GetBool("dry-run-ollama")
+
+	ollamaTimeout, _ := cmd.Flags().GetDuration("ollama-timeout")
+	if ollamaTimeout == 0 {
+		if envVal := os.Getenv("SMARTWORDLIST_OLLAMA_TIMEOUT"); envVal != "" {
+			if parsed, err := time.ParseDuration(envVal); err == nil {
+				ollamaTimeout = parsed
+			}
+		}
+	}
 
 	// Auto-derive JSON path from output when not explicitly set.
 	if jsonPath == "" && output != "" {
@@ -147,6 +158,16 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println(cli.Info(fmt.Sprintf("Rules file: %s", cfg.RulesPath)))
 
+	if !noLLM {
+		smallModels := map[string]bool{
+			"qwen3:0.6b": true, "qwen3:0.5b": true, "tinyllama": true,
+			"llama3.2:1b": true, "phi3:mini": true,
+		}
+		if smallModels[cfg.Model] {
+			fmt.Println(cli.Warning(fmt.Sprintf("Model %q is very small — output quality may be poor. Consider using a 3B+ model for better results.", cfg.Model)))
+		}
+	}
+
 	// ---- context ----
 
 	ctx, cancel := context.WithTimeout(context.Background(), pipelineTimeout)
@@ -154,7 +175,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// ---- Ollama client init ----
 
-	ollamaClient := ollama.NewClient(defaultOllamaURL, 0)
+	ollamaClient := ollama.NewClient(defaultOllamaURL, ollamaTimeout)
 
 	// ---- dry-run-ollama (W4) ----
 
@@ -849,11 +870,42 @@ func dedupeStrings(ss []string) []string {
 }
 
 // isJunkCandidate returns true for candidates that are obviously not
-// real passwords.
+// real passwords. It filters whitespace, very short words, purely numeric
+// strings, and strings with no letters at all.
 func isJunkCandidate(w string) bool {
-	// Only filter spaces — domain patterns are too risky to filter blindly.
-	// Better to fix the input data than filter the output.
-	return strings.ContainsAny(w, " \t\n\r")
+	if strings.ContainsAny(w, " \t\n\r") {
+		return true
+	}
+	// Filter candidates shorter than 4 chars.
+	if len(w) < 4 {
+		return true
+	}
+	// Filter purely numeric candidates.
+	if isAllDigitsStr(w) {
+		return true
+	}
+	// Filter candidates that are only special chars.
+	hasLetter := false
+	for _, r := range w {
+		if unicode.IsLetter(r) {
+			hasLetter = true
+			break
+		}
+	}
+	if !hasLetter {
+		return true
+	}
+	return false
+}
+
+// isAllDigitsStr returns true when every rune in s is a digit.
+func isAllDigitsStr(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
 }
 
 func joinStrings(ss []string, sep string) string {

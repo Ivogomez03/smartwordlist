@@ -94,12 +94,16 @@ func (rg *RuleGenerator) collectWords() []string {
 	add(r.Company)
 	// Also split multi-word company names into individual tokens.
 	for _, part := range strings.Fields(r.Company) {
-		add(part)
+		if len(part) > 2 && !isJunkWord(part) {
+			add(part)
+		}
 	}
 	// Technologies are NOT used as base words — they're context for the LLM,
 	// not something people put in passwords.
 	for _, k := range r.Keywords {
-		add(k)
+		if !isJunkWord(k) {
+			add(k)
+		}
 	}
 	for _, sd := range r.Subdomains {
 		// Only use the subdomain prefix, not the full FQDN.
@@ -125,12 +129,75 @@ func (rg *RuleGenerator) collectWords() []string {
 
 // cleanWord trims, lowercases, and removes non-alphanumeric characters
 // from the edges of a word so it is suitable as a base for mutation.
+// Accented characters (ó, ñ, ç, etc.) are first normalized to their ASCII
+// base so Spanish/Portuguese brand names like "Barceló" become "Barcelo"
+// instead of being truncated to "Barcel".
 func cleanWord(s string) string {
+	s = normalizeAccents(s)
 	s = trimNonAlphaNumeric(s)
 	if s == "" {
 		return ""
 	}
 	return s
+}
+
+// isJunkWord returns true for words that are too generic to be useful
+// as password base words. This includes common English function words,
+// tech noise, and web boilerplate terms scraped from pages.
+func isJunkWord(w string) bool {
+	w = strings.ToLower(w)
+	junk := map[string]bool{
+		"the": true, "and": true, "for": true, "new": true, "all": true,
+		"our": true, "its": true, "has": true, "are": true, "was": true,
+		"can": true, "not": true, "you": true, "your": true, "from": true,
+		"that": true, "this": true, "with": true, "have": true, "been": true,
+		"will": true, "more": true, "page": true, "home": true, "site": true,
+		"need": true, "run": true, "app": true, "api": true, "use": true,
+		"get": true, "one": true, "two": true, "see": true, "now": true,
+		"com": true, "org": true, "net": true, "www": true,
+		"enable": true, "javascript": true, "cookie": true, "function": true,
+		"brand": true, "center": true, "rights": true, "reserved": true,
+		"privacy": true, "policy": true, "terms": true, "contact": true,
+		"about": true, "search": true, "menu": true, "close": true,
+		"open": true, "login": true, "register": true, "sign": true,
+		"subscribe": true, "newsletter": true, "follow": true, "share": true,
+		"like": true, "comment": true, "download": true, "upload": true,
+		"click": true, "here": true, "link": true, "skip": true,
+		"content": true, "main": true, "navigation": true, "footer": true,
+		"header": true, "sidebar": true, "related": true, "previous": true,
+		"next": true, "back": true, "top": true, "read": true,
+		"view": true, "web": true, "website": true, "online": true,
+		"internet": true, "https": true, "http": true, "html": true,
+		"css": true,
+	}
+	return junk[w]
+}
+
+// accentMap maps common Spanish/Portuguese accented characters to ASCII.
+var accentMap = map[rune]rune{
+	'á': 'a', 'à': 'a', 'ã': 'a', 'â': 'a', 'ä': 'a',
+	'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
+	'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
+	'ó': 'o', 'ò': 'o', 'õ': 'o', 'ô': 'o', 'ö': 'o',
+	'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
+	'ñ': 'n', 'ç': 'c',
+	'Á': 'A', 'À': 'A', 'Ã': 'A', 'Â': 'A', 'Ä': 'A',
+	'É': 'E', 'È': 'E', 'Ê': 'E', 'Ë': 'E',
+	'Í': 'I', 'Ì': 'I', 'Î': 'I', 'Ï': 'I',
+	'Ó': 'O', 'Ò': 'O', 'Õ': 'O', 'Ô': 'O', 'Ö': 'O',
+	'Ú': 'U', 'Ù': 'U', 'Û': 'U', 'Ü': 'U',
+	'Ñ': 'N', 'Ç': 'C',
+}
+
+// normalizeAccents replaces accented characters with their ASCII base forms.
+func normalizeAccents(s string) string {
+	runes := []rune(s)
+	for i, r := range runes {
+		if repl, ok := accentMap[r]; ok {
+			runes[i] = repl
+		}
+	}
+	return string(runes)
 }
 
 // trimNonAlphaNumeric removes leading and trailing characters that are not

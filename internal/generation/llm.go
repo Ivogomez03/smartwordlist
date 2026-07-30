@@ -167,7 +167,10 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 		b.WriteString("\n")
 	}
 	b.WriteString("\nGenerate 500 password guesses for this company. One per line.\n")
-	b.WriteString("Example: RonBarcelo2026, BarceloAdmin!, BrandCenter2026, Ron2026Admin\n")
+	b.WriteString("Think about how employees at this company might create passwords.\n")
+	b.WriteString("Include brand names, product names, locations, internal terms, and creative combinations.\n")
+	b.WriteString("Vary complexity: some simple, some with numbers/symbols, some phrase-based.\n")
+	b.WriteString("Do NOT repeat the same word with just different years or one symbol appended.\n")
 	b.WriteString("Only output passwords. No explanations. No markdown.\n")
 
 	return b.String()
