@@ -647,14 +647,13 @@ func runLLMPipeline(
 
 	// Generate via LLM.
 	// The first request to Ollama loads the model into RAM, which can take
-	// 1-3 minutes on constrained hardware (MacBook Air, low RAM). The HTTP
-	// client has a 300s timeout and the pipeline has a 5-min budget, so
-	// there's plenty of time. Subsequent runs are fast since the model
-	// stays loaded in Ollama's cache.
+	// several minutes on constrained hardware (MacBook Air, low RAM). The
+	// HTTP client has a 600s timeout matching the 10-min pipeline budget.
 	if verbose {
-		fmt.Println(cli.Info("Loading LLM model (first run may take 1-3 minutes)..."))
+		fmt.Println(cli.Info("Loading LLM model (first run may take several minutes)..."))
 	}
 	llmGen := generation.NewLLMGenerator(ollamaClient, cfg.Model)
+	llmGen.SetDebug(verbose)
 	candidates, err := llmGen.Generate(ctx, scoredChunks, cfg.Max)
 	if err != nil {
 		fmt.Println(cli.Warning(fmt.Sprintf("LLM generation failed: %v — falling back to rule-only", err)))

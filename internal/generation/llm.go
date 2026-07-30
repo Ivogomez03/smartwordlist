@@ -3,6 +3,7 @@ package generation
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"unicode"
@@ -27,11 +28,17 @@ const maxPasswordLen = 24
 type LLMGenerator struct {
 	client *ollama.Client
 	model  string
+	debug  bool // when true, prints raw LLM response for troubleshooting
 }
 
 // NewLLMGenerator returns an LLMGenerator backed by the given Ollama client.
 func NewLLMGenerator(client *ollama.Client, model string) *LLMGenerator {
 	return &LLMGenerator{client: client, model: model}
+}
+
+// SetDebug enables or disables debug logging of the raw LLM response.
+func (lg *LLMGenerator) SetDebug(v bool) {
+	lg.debug = v
 }
 
 // Generate builds a prompt from RAG chunks, calls Ollama in non-streaming
@@ -54,6 +61,12 @@ func (lg *LLMGenerator) Generate(ctx context.Context, chunks []types.ScoredChunk
 		full.WriteString(token)
 	}
 	response := full.String()
+
+	// Debug: show raw LLM output when verbose.
+	if lg.debug {
+		fmt.Fprintf(os.Stderr, "\n--- RAW LLM RESPONSE (%d bytes) ---\n%s\n--- END RAW ---\n",
+			len(response), response)
+	}
 
 	// Parse lines through cleanCandidate for sanitization.
 	var candidates []types.Candidate
