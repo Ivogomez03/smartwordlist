@@ -255,3 +255,16 @@ func isOnlyDigits(s string) bool {
 	}
 	return true
 }
+
+// dedupeSlice returns a new slice with duplicate strings removed.
+func dedupeSlice(ss []string) []string {
+	seen := make(map[string]bool, len(ss))
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
