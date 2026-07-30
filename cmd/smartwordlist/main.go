@@ -629,31 +629,15 @@ func runLLMPipeline(
 		}
 	}
 
-	// Pre-warm the LLM model: on first request Ollama loads the model into
-	// RAM, which can take 2+ minutes on constrained hardware. We send a
-	// minimal prompt first to trigger loading, so the real call is fast.
-	// Uses a separate short context so a slow pre-warm doesn't eat the
-	// pipeline budget.
+	// Generate via LLM.
+	// The first request to Ollama loads the model into RAM, which can take
+	// 1-3 minutes on constrained hardware (MacBook Air, low RAM). The HTTP
+	// client has a 300s timeout and the pipeline has a 5-min budget, so
+	// there's plenty of time. Subsequent runs are fast since the model
+	// stays loaded in Ollama's cache.
 	if verbose {
-		fmt.Println(cli.Info("Pre-warming LLM model (first request triggers model loading)..."))
+		fmt.Println(cli.Info("Loading LLM model (first run may take 1-3 minutes)..."))
 	}
-	preWarmCtx, preWarmCancel := context.WithTimeout(context.Background(), 180*time.Second)
-	preWarmCh, preWarmErr := ollamaClient.Generate(preWarmCtx, cfg.Model, ".", false)
-	if preWarmErr == nil {
-		// Drain the single-response channel.
-		for range preWarmCh {
-		}
-		if verbose {
-			fmt.Println(cli.Success("LLM model pre-warmed — generation will be fast"))
-		}
-	} else {
-		if verbose {
-			fmt.Println(cli.Warning(fmt.Sprintf("Pre-warm: %v (continuing anyway)", preWarmErr)))
-		}
-	}
-	preWarmCancel()
-
-	// Generate via LLM
 	llmGen := generation.NewLLMGenerator(ollamaClient, cfg.Model)
 	candidates, err := llmGen.Generate(ctx, scoredChunks, cfg.Max)
 	if err != nil {
