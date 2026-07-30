@@ -123,7 +123,9 @@ func isMetaLine(line string) bool {
 }
 
 // buildPrompt creates a simple, direct prompt from RAG chunks.
-// Small models need dead-simple instructions with concrete examples.
+// Small models need dead-simple instructions. Keywords and technologies
+// are filtered to remove generic web boilerplate noise that would
+// pollute the model's output with junk like "EnableNginx1234".
 func buildPrompt(chunks []types.ScoredChunk) string {
 	var company, techStr, kwStr string
 
@@ -135,6 +137,11 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 			}
 		case "technologies":
 			if v := extractValue(c.Text); v != "" && !strings.Contains(v, ".") {
+				v = strings.ToLower(strings.TrimSpace(v))
+				// Skip generic tech noise that produces weak passwords.
+				if isLLMJunkWord(v) {
+					continue
+				}
 				if techStr != "" {
 					techStr += ", "
 				}
@@ -142,6 +149,12 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 			}
 		case "keywords":
 			if v := extractValue(c.Text); v != "" && !strings.Contains(v, ".") && len(v) > 2 {
+				v = strings.ToLower(strings.TrimSpace(v))
+				// Filter boilerplate web keywords so the model doesn't
+				// build passwords around "javascript" or "enable".
+				if isLLMJunkWord(v) {
+					continue
+				}
 				if kwStr != "" {
 					kwStr += ", "
 				}
@@ -157,23 +170,70 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 	}
 	b.WriteString("\n")
 	if techStr != "" {
-		b.WriteString("Tech: ")
+		b.WriteString("Tech stack (context only): ")
 		b.WriteString(techStr)
 		b.WriteString("\n")
 	}
 	if kwStr != "" {
-		b.WriteString("Keywords: ")
+		b.WriteString("Site keywords (context only): ")
 		b.WriteString(kwStr)
 		b.WriteString("\n")
 	}
-	b.WriteString("\nGenerate 500 password guesses for this company. One per line.\n")
-	b.WriteString("Think about how employees at this company might create passwords.\n")
-	b.WriteString("Include brand names, product names, locations, internal terms, and creative combinations.\n")
-	b.WriteString("Vary complexity: some simple, some with numbers/symbols, some phrase-based.\n")
-	b.WriteString("Do NOT repeat the same word with just different years or one symbol appended.\n")
+	b.WriteString("\nYou are generating password guesses for security testing.\n")
+	b.WriteString("Generate 500 password candidates for this company. One per line.\n")
+	b.WriteString("Base passwords on: brand name, products, company culture, industry terms.\n")
+	b.WriteString("Keywords and tech stack are CONTEXT — use them to understand the company,\n")
+	b.WriteString("NOT as direct base words. Do NOT create passwords like \"EnableNginx123\"\n")
+	b.WriteString("or \"NeedJavaScript\" — those are website boilerplate, not real passwords.\n")
+	b.WriteString("Include: creative combinations, internal project names, brand+location,\n")
+	b.WriteString("industry-specific terms, mixed languages if relevant (Spanish for this site).\n")
+	b.WriteString("Vary complexity: some short, some long, some with numbers/symbols.\n")
+	b.WriteString("Do NOT output the same base word with only year or symbol variations.\n")
 	b.WriteString("Only output passwords. No explanations. No markdown.\n")
 
 	return b.String()
+}
+
+// isLLMJunkWord returns true for words that would pollute the LLM prompt
+// and cause the model to generate weak passwords. This is a superset of
+// the rule-engine junk filter and adds tech/generic terms.
+func isLLMJunkWord(w string) bool {
+	junk := map[string]bool{
+		// Function words and web boilerplate (same as rules.go isJunkWord)
+		"the": true, "and": true, "for": true, "new": true, "all": true,
+		"our": true, "its": true, "has": true, "are": true, "was": true,
+		"can": true, "not": true, "you": true, "your": true, "from": true,
+		"that": true, "this": true, "with": true, "have": true, "been": true,
+		"will": true, "more": true, "page": true, "home": true, "site": true,
+		"need": true, "run": true, "app": true, "api": true, "use": true,
+		"get": true, "one": true, "two": true, "see": true, "now": true,
+		"com": true, "org": true, "net": true, "www": true,
+		"enable": true, "javascript": true, "cookie": true, "function": true,
+		"brand": true, "center": true, "rights": true, "reserved": true,
+		"privacy": true, "policy": true, "terms": true, "contact": true,
+		"about": true, "search": true, "menu": true, "close": true,
+		"open": true, "login": true, "register": true, "sign": true,
+		"subscribe": true, "newsletter": true, "follow": true, "share": true,
+		"like": true, "comment": true, "download": true, "upload": true,
+		"click": true, "here": true, "link": true, "skip": true,
+		"content": true, "main": true, "navigation": true, "footer": true,
+		"header": true, "sidebar": true, "related": true, "previous": true,
+		"next": true, "back": true, "top": true, "read": true,
+		"view": true, "web": true, "website": true, "online": true,
+		"internet": true, "https": true, "http": true, "html": true,
+		"css": true, "internal": true,
+		// Tech stack — context only, not password material.
+		"nginx": true, "apache": true, "cloudflare": true, "plesk": true,
+		"plesklin": true, "cpanel": true, "wordpress": true, "jquery": true,
+		"bootstrap": true, "react": true, "vue": true, "angular": true,
+		"node": true, "express": true, "django": true, "laravel": true,
+		"php": true, "mysql": true, "postgres": true, "redis": true,
+		"docker": true, "kubernetes": true, "aws": true, "azure": true,
+		"google": true, "analytics": true, "tag": true, "manager": true,
+		"tech": true, "stack": true, "server": true, "hosting": true,
+		"host": true, "cdn": true, "dns": true, "ssl": true,
+	}
+	return junk[w]
 }
 
 // extractValue strips the "section: " prefix that the chunker prepends.
