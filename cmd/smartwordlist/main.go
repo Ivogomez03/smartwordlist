@@ -516,7 +516,7 @@ func runDryRunOllama(ctx context.Context, client *ollama.Client, cfg *types.Conf
 
 func checkModel(ctx context.Context, client *ollama.Client, model string) string {
 	// Use a minimal prompt to test if the model exists.
-	ch, err := client.Generate(ctx, model, "test", false, nil)
+	ch, err := client.Generate(ctx, model, "test", false, nil, nil)
 	if err != nil {
 		return cli.Warning(fmt.Sprintf("Model %s: UNAVAILABLE — %v", model, err))
 	}
@@ -642,6 +642,29 @@ func runLLMPipeline(
 		scoredChunks = make([]types.ScoredChunk, len(chunks))
 		for i, c := range chunks {
 			scoredChunks[i] = types.ScoredChunk{Chunk: c, Score: 1.0}
+		}
+	}
+
+	// Company-context safety guard: on tiny recon datasets (< ~10 vectors)
+	// veclite HNSW retrieval can drop the company chunk, which is the only
+	// real signal buildPrompt reads. Missing it forces "Company: (unknown)"
+	// and the LLM hallucinates. If the company chunk didn't survive
+	// retrieval, force it through with a high score.
+	companyPresent := false
+	for _, sc := range scoredChunks {
+		if sc.Source == "company" {
+			companyPresent = true
+			break
+		}
+	}
+	if !companyPresent {
+		for i := range chunks {
+			if chunks[i].Source == "company" {
+				scoredChunks = append([]types.ScoredChunk{
+					{Chunk: chunks[i], Score: 1.0},
+				}, scoredChunks...)
+				break
+			}
 		}
 	}
 

@@ -191,11 +191,20 @@ type generateRequest struct {
 	// mode, or pass a JSON-Schema object (map[string]any) to constrain the
 	// response shape. When nil/omitted the model returns free text.
 	Format any `json:"format,omitempty"`
+	// Think controls the thinking/tool-use mode for models that support it.
+	// nil (default) omits the field entirely; &false disables thinking so the
+	// model puts output in "response" instead of "thinking". Must be *bool
+	// with omitempty — a plain bool with omitempty would drop &false.
+	Think *bool `json:"think,omitempty"`
 }
 
 // generateChunk is a single NDJSON line from the streaming /api/generate response.
 type generateChunk struct {
 	Response string `json:"response"`
+	// Thinking captures output that thinking-enabled models route to the
+	// "thinking" field. We surface it so even if a model ignores think:false,
+	// we still recover the JSON content.
+	Thinking string `json:"thinking,omitempty"`
 	Done     bool   `json:"done"`
 	Error    string `json:"error,omitempty"`
 }
@@ -226,15 +235,20 @@ func (e *ErrModelNotFound) Is(target error) bool {
 // object (map[string]any) to constrain the response shape. Pass nil to
 // omit the field (free-text mode).
 //
+// The think parameter controls the thinking/tool-use mode for models that
+// support it. Pass nil to omit the field; pass &false to disable thinking
+// (ensures output goes to "response", not "thinking").
+//
 // The returned error covers only request-setup failures; streaming errors
 // (including ErrModelNotFound) cause the channel to close early.  Callers
 // should range over the channel until it closes.
-func (c *Client) Generate(ctx context.Context, model, prompt string, stream bool, format any) (<-chan string, error) {
+func (c *Client) Generate(ctx context.Context, model, prompt string, stream bool, format any, think *bool) (<-chan string, error) {
 	body := generateRequest{
 		Model:  model,
 		Prompt: prompt,
 		Stream: stream,
 		Format: format,
+		Think:  think,
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -272,6 +286,10 @@ func (c *Client) Generate(ctx context.Context, model, prompt string, stream bool
 // streamGenerate reads NDJSON lines from the response body and sends each
 // "response" field token to the channel. It closes the channel when the
 // stream ends or the context is cancelled.
+//
+// Thinking-model output (the "thinking" field) is also surfaced: even when
+// think:false is sent, a model might still route output to "thinking".
+// We emit both fields to the caller so the parser sees the full content.
 func (c *Client) streamGenerate(ctx context.Context, body io.ReadCloser, ch chan<- string) {
 	defer close(ch)
 	defer body.Close()
@@ -303,9 +321,17 @@ func (c *Client) streamGenerate(ctx context.Context, body io.ReadCloser, ch chan
 			return
 		}
 
+		// Emit Response first, then Thinking — both may carry content.
 		if chunk.Response != "" {
 			select {
 			case ch <- chunk.Response:
+			case <-ctx.Done():
+				return
+			}
+		}
+		if chunk.Thinking != "" {
+			select {
+			case ch <- chunk.Thinking:
 			case <-ctx.Done():
 				return
 			}

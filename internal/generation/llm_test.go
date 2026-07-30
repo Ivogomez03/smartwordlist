@@ -367,3 +367,45 @@ func TestIsValidCandidate_AllowsPasswordSymbols(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// extractCandidates — merged thinking + response stream (thinking-model fix)
+// ---------------------------------------------------------------------------
+
+// TestExtractCandidates_MergedThinkingResponse simulates the stream where
+// thinking content may be concatenated with response JSON (the qwen3:4b bug
+// scenario before the think:false fix). The parser must locate and extract
+// the JSON object from the merged stream.
+func TestExtractCandidates_MergedThinkingResponse(t *testing.T) {
+	// Simulate a stream where a first chunk carried thinking-prefix text,
+	// and a later chunk carried the JSON. The full builder concatenates both.
+	response := `To generate 50 diverse password guesses for Ron Barcelo, I need to consider combinations of the company name parts with numbers, symbols, and mixed case.
+
+{"passwords": ["Ron2024!", "Barcelo#23", "ron_barcelo12", "RonBarcelo24", "brand2024", "Brand@25", "ronbrand2025", "Barcelo123"]}
+
+The output includes word+number, word+symbol, and mixed case combinations as requested.`
+
+	candidates := extractCandidates(response, 0)
+
+	if len(candidates) < 5 {
+		t.Fatalf("expected at least 5 candidates from merged thinking+JSON stream, got %d: %v", len(candidates), candidates)
+	}
+
+	words := make(map[string]bool)
+	for _, c := range candidates {
+		words[c.Word] = true
+	}
+
+	// All JSON-embedded passwords must be recovered.
+	must := []string{"Ron2024!", "Barcelo#23", "ron_barcelo12", "RonBarcelo24", "brand2024", "Brand@25", "ronbrand2025", "Barcelo123"}
+	for _, w := range must {
+		if !words[w] {
+			t.Errorf("password %q NOT recovered from merged thinking+JSON stream", w)
+		}
+	}
+
+	// Prose from the thinking prefix/suffix must NOT appear as candidates.
+	if words["To"] || words["generate"] || words["output"] || words["includes"] {
+		t.Error("prose tokens from thinking stream leaked into candidates")
+	}
+}

@@ -55,7 +55,8 @@ func (lg *LLMGenerator) Generate(ctx context.Context, chunks []types.ScoredChunk
 		"required": []string{"passwords"},
 	}
 
-	ch, err := lg.client.Generate(ctx, lg.model, prompt, false, jsonSchema)
+	thinkFalse := false
+	ch, err := lg.client.Generate(ctx, lg.model, prompt, false, jsonSchema, &thinkFalse)
 	if err != nil {
 		return nil, fmt.Errorf("llm generate: %w", err)
 	}
@@ -439,7 +440,7 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 	b.WriteString("\n\n")
 
 	// Diversity instructions — natural language, not a programming spec.
-	b.WriteString("Generate 500 diverse password guesses derived from the company name and its parts.\n")
+	b.WriteString("Generate 50 diverse password guesses derived from the company name and its parts.\n")
 	b.WriteString("Include a mix of formats: word+number, word+symbol, word+word, lowercase+year.\n")
 	b.WriteString("Use different combinations, symbols (!@#$%.), 2-4 digit numbers, and mixed case.\n")
 	b.WriteString("Vary length: short (6-8 chars) and medium (10-16 chars).\n\n")
