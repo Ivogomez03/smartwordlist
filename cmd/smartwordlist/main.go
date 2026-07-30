@@ -267,11 +267,22 @@ func run(cmd *cobra.Command, args []string) error {
 
 		candidatesCh <- allCandidates
 
-		// Stage 3: Enrichment (mutation + optional dictionary combos)
+		// Stage 3: Enrichment (mutation + optional dictionary combos).
+		// In LLM mode, the model generates final passwords — no mutations.
 		go func() {
 			candidates := <-candidatesCh
+			if llmMode {
+				// LLM mode: use candidates directly, no enrichment.
+				enrichedCh <- enrichedResult{
+					candidates:     candidates,
+					sources:        sourcesUsed,
+					totalGenerated: len(candidates),
+				}
+				return
+			}
+			// Rule-only mode: apply mutations and combos.
 			enriched, allSources, mutationCount, comboCount := enrichCandidates(
-				candidates, reconResult, mutEngine, dicts, max, verbose, llmMode,
+				candidates, reconResult, mutEngine, dicts, max, verbose,
 			)
 			// Merge sources from generation stage.
 			for _, s := range sourcesUsed {
@@ -643,7 +654,6 @@ func enrichCandidates(
 	dicts map[string][]string,
 	max int,
 	verbose bool,
-	skipCombos bool,
 ) ([]types.Candidate, []string, int, int) {
 	allCandidates := make([]types.Candidate, len(baseCandidates))
 	copy(allCandidates, baseCandidates)
@@ -677,11 +687,9 @@ func enrichCandidates(
 	}
 
 	// ---- Dictionary combinations ----
-	// Skip combos in LLM mode — the model should be the primary source.
-	// Combos are only useful in rule-only mode as a fallback.
 	comboStart := time.Now()
 	comboCount := 0
-	if !skipCombos {
+	{
 		var dictWords []string
 		for _, words := range dicts {
 			dictWords = append(dictWords, words...)
