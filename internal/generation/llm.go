@@ -203,9 +203,10 @@ func isMetaLine(line string) bool {
 		strings.HasPrefix(lower, "user:")
 }
 
-// buildPrompt creates a minimal, direct prompt. No structural rules —
-// the model already knows what passwords look like. Complex instructions
-// cause qwen models to output explanatory text instead of passwords.
+// buildPrompt creates a short prompt that produces varied output.
+// The key insight: models default to enumerating (word1, word2, word3...)
+// unless explicitly told to vary. A few seed examples derived from the
+// company name kickstart diversity without being hardcoded patterns.
 func buildPrompt(chunks []types.ScoredChunk) string {
 	var company string
 
@@ -215,15 +216,48 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 		}
 	}
 
+	// Derive seed words from company name for example variety.
+	var seeds []string
+	if company != "" {
+		parts := strings.Fields(company)
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if len(p) > 2 {
+				seeds = append(seeds, p)
+			}
+		}
+	}
+
 	var b strings.Builder
 	b.WriteString("Company: ")
 	if company != "" {
 		b.WriteString(company)
 	}
 	b.WriteString("\n\n")
-	b.WriteString("Generate 500 password guesses for this company.\n")
-	b.WriteString("One password per line. Output only the passwords.\n")
-	b.WriteString("Do not write explanations, introductions, or markdown.\n")
+	b.WriteString("Generate 500 password guesses. Vary EVERY password:\n")
+	b.WriteString("- Mix formats: Word+Number, Word+Symbol, WordWord, lowercase+year\n")
+	b.WriteString("- Use different combinations of company name parts\n")
+	b.WriteString("- Add symbols (!@#$%.) and 2-4 digit numbers (not sequential)\n")
+	b.WriteString("- Mix upper/lowercase. Include short (6-8) and medium (10-16) lengths.\n")
+	if len(seeds) > 0 {
+		b.WriteString("Examples of VARIED passwords (do NOT copy these): ")
+		for i, s := range seeds {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(s + "2024!")
+			if i < len(seeds)-1 {
+				seed2 := seeds[i+1]
+				if seed2 != s {
+					b.WriteString(", " + s + seed2 + "#24")
+				}
+			}
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("CRITICAL: Do NOT enumerate (word1, word2, word3...).\n")
+	b.WriteString("Each line must look like a DIFFERENT person created it.\n")
+	b.WriteString("Output only passwords. One per line. No other text.\n")
 
 	return b.String()
 }
