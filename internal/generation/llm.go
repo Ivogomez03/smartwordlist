@@ -15,38 +15,27 @@ import (
 // llmNumberPrefix matches lines that the model numbered — e.g. "28. password".
 var llmNumberPrefix = regexp.MustCompile(`^\d+[.)]\s*`)
 
-// longDigitSeq matches 5 or more consecutive digits — a clear sign of
-// LLM hallucination where the model generates endless number sequences.
+// longDigitSeq matches 5 or more consecutive digits — LLM hallucination.
 var longDigitSeq = regexp.MustCompile(`\d{5,}`)
 
-// maxPasswordLen is the maximum allowed password length. Longer passwords
-// are almost always LLM hallucinations (runaway generation).
-const maxPasswordLen = 24
-
-// LLMGenerator produces password candidates by sending a RAG-enhanced prompt
-// to an Ollama language model and parsing the response line by line.
+// LLMGenerator produces password candidates via Ollama.
 type LLMGenerator struct {
 	client *ollama.Client
 	model  string
-	debug  bool // when true, prints raw LLM response for troubleshooting
+	debug  bool
 }
 
-// NewLLMGenerator returns an LLMGenerator backed by the given Ollama client.
 func NewLLMGenerator(client *ollama.Client, model string) *LLMGenerator {
 	return &LLMGenerator{client: client, model: model}
 }
 
-// SetDebug enables or disables debug logging of the raw LLM response.
 func (lg *LLMGenerator) SetDebug(v bool) {
 	lg.debug = v
 }
 
-// Generate builds a prompt from RAG chunks, calls Ollama in non-streaming
-// mode, and parses the complete response. Non-streaming is used because it
-// reliably produces complete lines with proper newline separation — streaming
-// mode can produce garbled line boundaries that cause zero candidates with
-// some models. The spinner in main.go provides progress feedback during the
-// wait, and the prompt's strict structure rules ensure output quality.
+// Generate sends a simple prompt to Ollama and extracts password-like
+// strings from the response. The parser is intentionally lenient —
+// downstream scoring and junk filters handle quality.
 func (lg *LLMGenerator) Generate(ctx context.Context, chunks []types.ScoredChunk, max int) ([]types.Candidate, error) {
 	prompt := buildPrompt(chunks)
 
@@ -55,203 +44,174 @@ func (lg *LLMGenerator) Generate(ctx context.Context, chunks []types.ScoredChunk
 		return nil, fmt.Errorf("llm generate: %w", err)
 	}
 
-	// Collect the full response.
 	var full strings.Builder
 	for token := range ch {
 		full.WriteString(token)
 	}
 	response := full.String()
 
-	// Debug: show raw LLM output when verbose.
 	if lg.debug {
-		fmt.Fprintf(os.Stderr, "\n--- RAW LLM RESPONSE (%d bytes) ---\n%s\n--- END RAW ---\n",
+		fmt.Fprintf(os.Stderr, "\n--- RAW LLM (%d bytes) ---\n%s\n--- END RAW ---\n",
 			len(response), response)
 	}
 
-	// Parse lines through cleanCandidate for sanitization.
+	return extractCandidates(response, max), nil
+}
+
+// extractCandidates parses the LLM response with a lenient approach:
+// split on newlines, strip common formatting, and accept anything that
+// looks like a plausible password (4-30 chars, has letters, no spaces).
+// Quality filtering happens downstream in the scorer and isJunkCandidate.
+func extractCandidates(text string, max int) []types.Candidate {
 	var candidates []types.Candidate
 	seen := make(map[string]bool)
-	for _, line := range strings.Split(response, "\n") {
-		cand := cleanCandidate(line)
-		if cand == "" {
+
+	for _, raw := range strings.Split(text, "\n") {
+		word := cleanLine(raw)
+		if word == "" {
 			continue
 		}
-		if seen[cand] {
+		if seen[word] {
 			continue
 		}
-		seen[cand] = true
-		candidates = append(candidates, types.Candidate{Word: cand, Source: "llm"})
+		seen[word] = true
+		candidates = append(candidates, types.Candidate{Word: word, Source: "llm"})
 		if max > 0 && len(candidates) >= max {
 			break
 		}
 	}
 
-	return candidates, nil
+	// Fallback: if splitting on newlines yielded nothing, try splitting
+	// on whitespace/punctuation — some models output comma-separated lists.
+	if len(candidates) == 0 && len(text) > 0 {
+		words := splitOnWordBoundaries(text)
+		for _, w := range words {
+			word := cleanLine(w)
+			if word == "" || seen[word] {
+				continue
+			}
+			seen[word] = true
+			candidates = append(candidates, types.Candidate{Word: word, Source: "llm"})
+			if max > 0 && len(candidates) >= max {
+				break
+			}
+		}
+	}
+
+	return candidates
 }
 
-// cleanCandidate normalizes a line into a valid password candidate,
-// returning "" if the line should be discarded. Also applies post-generation
-// sanitization to catch LLM hallucinations (long digit sequences, excessive
-// length, keyword concatenations).
-func cleanCandidate(line string) string {
+// splitOnWordBoundaries splits text on commas, semicolons, and whitespace.
+func splitOnWordBoundaries(text string) []string {
+	// Replace common separators with spaces, then split.
+	text = strings.ReplaceAll(text, ",", " ")
+	text = strings.ReplaceAll(text, ";", " ")
+	text = strings.ReplaceAll(text, "\t", " ")
+	return strings.Fields(text)
+}
+
+// cleanLine normalizes a line into a password candidate or returns "".
+// Rules are deliberately permissive — only reject obviously non-password text.
+func cleanLine(line string) string {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return ""
 	}
-	// Strip numbering: "28. password" → "password"
+
+	// Strip markdown code fences.
+	line = strings.TrimPrefix(line, "```")
+	line = strings.TrimSuffix(line, "```")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
+
+	// Strip numbering: "28. password" or "28) password".
 	line = llmNumberPrefix.ReplaceAllString(line, "")
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return ""
 	}
-	// Skip obvious non-password lines.
+
+	// Strip leading/trailing quotes.
+	line = strings.Trim(line, "\"'`")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
+
+	// Skip meta-commentary lines.
 	if isMetaLine(line) {
 		return ""
 	}
-	// Skip lines that are too short.
+
+	// Minimum length.
 	if len(line) < 4 {
 		return ""
 	}
-	// Skip lines with spaces — can't be a password.
+
+	// Maximum length (runaway generation).
+	if len(line) > 30 {
+		return ""
+	}
+
+	// Must have at least one letter.
+	hasLetter := false
+	for _, r := range line {
+		if unicode.IsLetter(r) {
+			hasLetter = true
+			break
+		}
+	}
+	if !hasLetter {
+		return ""
+	}
+
+	// Reject lines with spaces (can't be a single password).
 	if strings.ContainsAny(line, " \t") {
 		return ""
 	}
-	// Skip lines with markdown artifacts.
-	if strings.Contains(line, "#") || strings.Contains(line, "*") {
-		return ""
-	}
-	// Skip lines that are purely numeric.
-	if isAllDigits(line) {
+
+	// Reject lines with markdown formatting remnants.
+	line = strings.ReplaceAll(line, "**", "")
+	line = strings.ReplaceAll(line, "__", "")
+	if strings.HasPrefix(line, "#") {
 		return ""
 	}
 
-	// --- Post-generation sanitization ---
-
-	// Reject 5+ consecutive digits (LLM hallucination: "1234567890").
+	// Reject 5+ consecutive digits (LLM hallucination).
 	if longDigitSeq.MatchString(line) {
-		return ""
-	}
-
-	// Reject passwords longer than 24 chars (runaway generation).
-	if len(line) > maxPasswordLen {
-		return ""
-	}
-
-	// Reject excessive keyword concatenation: 3+ alternating upper/lower
-	// word boundaries without any digit or symbol usually means the LLM
-	// glued random keywords together (e.g., "AppRunNginxDeployTest").
-	if isKeywordConcat(line) {
 		return ""
 	}
 
 	return line
 }
 
-// isKeywordConcat returns true when the candidate appears to be 3 or more
-// English words concatenated without any digits or special characters —
-// a common LLM hallucination pattern.
-func isKeywordConcat(w string) bool {
-	// Only check candidates with no digits and no special chars —
-	// those are the ones at risk of being pure word concatenation.
-	if containsDigit(w) || containsSpecial(w) {
-		return false
-	}
-	// Count CamelCase word boundaries (uppercase letter preceded by lowercase).
-	wordCount := 1
-	runes := []rune(w)
-	for i := 1; i < len(runes); i++ {
-		if unicode.IsUpper(runes[i]) && unicode.IsLower(runes[i-1]) {
-			wordCount++
-		}
-	}
-	// Also split on common separators.
-	for _, r := range runes {
-		if r == '_' || r == '-' {
-			wordCount++
-		}
-	}
-	return wordCount >= 3 && len(w) > 12
-}
-
-// containsDigit reports whether s contains at least one ASCII digit.
-func containsDigit(s string) bool {
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			return true
-		}
-	}
-	return false
-}
-
-// containsSpecial reports whether s contains a non-letter, non-digit rune.
-func containsSpecial(s string) bool {
-	for _, r := range s {
-		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
-			return true
-		}
-	}
-	return false
-}
-
-func isAllDigits(s string) bool {
-	for _, r := range s {
-		if !unicode.IsDigit(r) {
-			return false
-		}
-	}
-	return len(s) > 0
-}
-
 func isMetaLine(line string) bool {
 	lower := strings.ToLower(line)
-	return strings.HasPrefix(lower, "here") ||
-		strings.HasPrefix(lower, "candidate") ||
-		strings.HasPrefix(lower, "note") ||
-		strings.HasPrefix(lower, "assistant") ||
-		strings.HasPrefix(lower, "password") ||
+	// Only filter lines that are CLEARLY meta-commentary, not password candidates.
+	return strings.HasPrefix(lower, "here are") ||
+		strings.HasPrefix(lower, "sure") ||
+		strings.HasPrefix(lower, "certainly") ||
+		strings.HasPrefix(lower, "below") ||
+		strings.HasPrefix(lower, "the following") ||
 		strings.Contains(lower, "sorry") ||
-		strings.Contains(lower, "cannot") ||
-		strings.Contains(lower, "example")
+		strings.Contains(lower, "cannot generate") ||
+		strings.Contains(lower, "i cannot") ||
+		strings.HasPrefix(lower, "note:") ||
+		strings.HasPrefix(lower, "assistant:") ||
+		strings.HasPrefix(lower, "user:")
 }
 
-// buildPrompt creates a simple, direct prompt from RAG chunks.
-// Small models need dead-simple instructions. Keywords and technologies
-// are filtered to remove generic web boilerplate noise that would
-// pollute the model's output with junk like "EnableNginx1234".
+// buildPrompt creates a minimal, direct prompt. No structural rules —
+// the model already knows what passwords look like. Complex instructions
+// cause qwen models to output explanatory text instead of passwords.
 func buildPrompt(chunks []types.ScoredChunk) string {
-	var company, techStr, kwStr string
+	var company string
 
 	for _, c := range chunks {
-		switch c.Source {
-		case "company":
-			if company == "" {
-				company = extractValue(c.Text)
-			}
-		case "technologies":
-			if v := extractValue(c.Text); v != "" && !strings.Contains(v, ".") {
-				v = strings.ToLower(strings.TrimSpace(v))
-				// Skip generic tech noise that produces weak passwords.
-				if isLLMJunkWord(v) {
-					continue
-				}
-				if techStr != "" {
-					techStr += ", "
-				}
-				techStr += v
-			}
-		case "keywords":
-			if v := extractValue(c.Text); v != "" && !strings.Contains(v, ".") && len(v) > 2 {
-				v = strings.ToLower(strings.TrimSpace(v))
-				// Filter boilerplate web keywords so the model doesn't
-				// build passwords around "javascript" or "enable".
-				if isLLMJunkWord(v) {
-					continue
-				}
-				if kwStr != "" {
-					kwStr += ", "
-				}
-				kwStr += v
-			}
+		if c.Source == "company" && company == "" {
+			company = extractValue(c.Text)
 		}
 	}
 
@@ -260,80 +220,16 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 	if company != "" {
 		b.WriteString(company)
 	}
-	b.WriteString("\n")
-	if techStr != "" {
-		b.WriteString("Tech stack (context only): ")
-		b.WriteString(techStr)
-		b.WriteString("\n")
-	}
-	if kwStr != "" {
-		b.WriteString("Site keywords (context only): ")
-		b.WriteString(kwStr)
-		b.WriteString("\n")
-	}
-	b.WriteString("\nYou are a password auditor generating guesses for authorized security testing.\n")
-	b.WriteString("Generate 500 password candidates for this company. One per line.\n\n")
-	b.WriteString("STRUCTURE RULES — every password MUST follow this format:\n")
-	b.WriteString("  BaseWord + Number(2-4 digits) + Symbol(0-1)   OR\n")
-	b.WriteString("  BaseWord + Symbol(0-1) + Number(2-4 digits)\n\n")
-	b.WriteString("  BaseWord = brand name, product, location, industry term, or employee name pattern.\n")
-	b.WriteString("  Combine at most TWO words together (e.g., \"RonBarcelo\", \"BarceloPuntaCana\").\n")
-	b.WriteString("  NEVER concatenate three or more words without numbers or symbols.\n\n")
-	b.WriteString("DIGIT RULES — CRITICAL:\n")
-	b.WriteString("  Use ONLY 2-4 digits per password. Fine: \"2026\", \"24\", \"007\", \"42\".\n")
-	b.WriteString("  PROHIBITED: 5 or more consecutive digits. NEVER generate long number sequences like \"1234567890\".\n\n")
-	b.WriteString("LENGTH RULES:\n")
-	b.WriteString("  Passwords MUST be 6-24 characters long. NOT shorter, NOT longer.\n")
-	b.WriteString("  If a candidate would exceed 24 chars, STOP and generate a shorter one.\n\n")
-	b.WriteString("VARIETY: Mix simple (Ron2026!) and complex (BarceloImperial24) patterns.\n")
-	b.WriteString("Use Spanish/English terms where relevant. Include product names if known.\n")
-	b.WriteString("Every candidate MUST be different. NO repetition with only year changes.\n")
-	b.WriteString("Only output passwords. No explanations. No markdown. No numbering.\n")
+	b.WriteString("\n\n")
+	b.WriteString("Generate 500 password guesses for this company.\n")
+	b.WriteString("One password per line. Output only the passwords.\n")
+	b.WriteString("Do not write explanations, introductions, or markdown.\n")
 
 	return b.String()
 }
 
-// isLLMJunkWord returns true for words that would pollute the LLM prompt
-// and cause the model to generate weak passwords. This is a superset of
-// the rule-engine junk filter and adds tech/generic terms.
-func isLLMJunkWord(w string) bool {
-	junk := map[string]bool{
-		// Function words and web boilerplate (same as rules.go isJunkWord)
-		"the": true, "and": true, "for": true, "new": true, "all": true,
-		"our": true, "its": true, "has": true, "are": true, "was": true,
-		"can": true, "not": true, "you": true, "your": true, "from": true,
-		"that": true, "this": true, "with": true, "have": true, "been": true,
-		"will": true, "more": true, "page": true, "home": true, "site": true,
-		"need": true, "run": true, "app": true, "api": true, "use": true,
-		"get": true, "one": true, "two": true, "see": true, "now": true,
-		"com": true, "org": true, "net": true, "www": true,
-		"enable": true, "javascript": true, "cookie": true, "function": true,
-		"brand": true, "center": true, "rights": true, "reserved": true,
-		"privacy": true, "policy": true, "terms": true, "contact": true,
-		"about": true, "search": true, "menu": true, "close": true,
-		"open": true, "login": true, "register": true, "sign": true,
-		"subscribe": true, "newsletter": true, "follow": true, "share": true,
-		"like": true, "comment": true, "download": true, "upload": true,
-		"click": true, "here": true, "link": true, "skip": true,
-		"content": true, "main": true, "navigation": true, "footer": true,
-		"header": true, "sidebar": true, "related": true, "previous": true,
-		"next": true, "back": true, "top": true, "read": true,
-		"view": true, "web": true, "website": true, "online": true,
-		"internet": true, "https": true, "http": true, "html": true,
-		"css": true, "internal": true,
-		// Tech stack — context only, not password material.
-		"nginx": true, "apache": true, "cloudflare": true, "plesk": true,
-		"plesklin": true, "cpanel": true, "wordpress": true, "jquery": true,
-		"bootstrap": true, "react": true, "vue": true, "angular": true,
-		"node": true, "express": true, "django": true, "laravel": true,
-		"php": true, "mysql": true, "postgres": true, "redis": true,
-		"docker": true, "kubernetes": true, "aws": true, "azure": true,
-		"google": true, "analytics": true, "tag": true, "manager": true,
-		"tech": true, "stack": true, "server": true, "hosting": true,
-		"host": true, "cdn": true, "dns": true, "ssl": true,
-	}
-	return junk[w]
-}
+// isLLMJunkWord is kept for reference but no longer used in the prompt builder.
+// The minimal prompt doesn't include keywords or tech stack — just the company name.
 
 // extractValue strips the "section: " prefix that the chunker prepends.
 func extractValue(text string) string {
