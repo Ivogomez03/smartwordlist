@@ -87,7 +87,7 @@ func init() {
 	rootCmd.Flags().String("model", envOrDefault("SMARTWORDLIST_MODEL", defaultOllamaModel), "Ollama LLM model name")
 	rootCmd.Flags().String("embedding-model", envOrDefault("SMARTWORDLIST_EMBED_MODEL", defaultEmbedModel), "Ollama embedding model name")
 	rootCmd.Flags().Bool("dry-run-ollama", false, "Check Ollama health and model availability, then exit")
-	rootCmd.Flags().Duration("ollama-timeout", 0, "Ollama HTTP client timeout (0 = default 120s, env: SMARTWORDLIST_OLLAMA_TIMEOUT)")
+	rootCmd.Flags().Duration("ollama-timeout", 0, "Ollama HTTP client timeout (0 = default 300s, env: SMARTWORDLIST_OLLAMA_TIMEOUT)")
 }
 
 func run(cmd *cobra.Command, args []string) error {
@@ -628,6 +628,30 @@ func runLLMPipeline(
 			scoredChunks[i] = types.ScoredChunk{Chunk: c, Score: 1.0}
 		}
 	}
+
+	// Pre-warm the LLM model: on first request Ollama loads the model into
+	// RAM, which can take 2+ minutes on constrained hardware. We send a
+	// minimal prompt first to trigger loading, so the real call is fast.
+	// Uses a separate short context so a slow pre-warm doesn't eat the
+	// pipeline budget.
+	if verbose {
+		fmt.Println(cli.Info("Pre-warming LLM model (first request triggers model loading)..."))
+	}
+	preWarmCtx, preWarmCancel := context.WithTimeout(context.Background(), 180*time.Second)
+	preWarmCh, preWarmErr := ollamaClient.Generate(preWarmCtx, cfg.Model, ".", false)
+	if preWarmErr == nil {
+		// Drain the single-response channel.
+		for range preWarmCh {
+		}
+		if verbose {
+			fmt.Println(cli.Success("LLM model pre-warmed — generation will be fast"))
+		}
+	} else {
+		if verbose {
+			fmt.Println(cli.Warning(fmt.Sprintf("Pre-warm: %v (continuing anyway)", preWarmErr)))
+		}
+	}
+	preWarmCancel()
 
 	// Generate via LLM
 	llmGen := generation.NewLLMGenerator(ollamaClient, cfg.Model)

@@ -24,10 +24,11 @@ import (
 )
 
 // DefaultTimeout is the fallback timeout when the constructor receives 0.
-// Set to 120s because Ollama loads the model on first request, which can take
-// 40+ seconds on slow hardware. The http.Client.Timeout fires BEFORE the
-// context deadline, so a 30s timeout kills the request before the model loads.
-const DefaultTimeout = 120 * time.Second
+// Set to 300s because Ollama loads the model on first request. On constrained
+// hardware (MacBook Air, low RAM) this can take 2+ minutes. The http.Client.Timeout
+// fires BEFORE the context deadline, so a short timeout kills the request before
+// the model loads. 300s matches the pipelineTimeout in main.go.
+const DefaultTimeout = 300 * time.Second
 
 // DefaultMaxRetries is the number of retry attempts for 5xx responses.
 const DefaultMaxRetries = 1
@@ -41,7 +42,7 @@ type Client struct {
 }
 
 // NewClient returns a Client targeting the given baseURL (e.g. "http://localhost:11434").
-// If timeout is 0, DefaultTimeout (120s) is used.
+// If timeout is 0, DefaultTimeout (300s) is used.
 // The client uses a 10s DialContext timeout so connection establishment never
 // hangs for too long, while the overall request gets the full timeout budget.
 func NewClient(baseURL string, timeout time.Duration) *Client {
