@@ -187,6 +187,10 @@ type generateRequest struct {
 	Model  string `json:"model"`
 	Prompt string `json:"prompt"`
 	Stream bool   `json:"stream"`
+	// Format forces structured output. Use the string "json" for raw JSON
+	// mode, or pass a JSON-Schema object (map[string]any) to constrain the
+	// response shape. When nil/omitted the model returns free text.
+	Format any `json:"format,omitempty"`
 }
 
 // generateChunk is a single NDJSON line from the streaming /api/generate response.
@@ -217,14 +221,20 @@ func (e *ErrModelNotFound) Is(target error) bool {
 // arrive (NDJSON). When stream is false the channel receives a single
 // aggregated response and then closes.
 //
+// The optional format parameter is sent as the "format" field in the request
+// body. Pass the string "json" to force raw JSON output, or a JSON-Schema
+// object (map[string]any) to constrain the response shape. Pass nil to
+// omit the field (free-text mode).
+//
 // The returned error covers only request-setup failures; streaming errors
 // (including ErrModelNotFound) cause the channel to close early.  Callers
 // should range over the channel until it closes.
-func (c *Client) Generate(ctx context.Context, model, prompt string, stream bool) (<-chan string, error) {
+func (c *Client) Generate(ctx context.Context, model, prompt string, stream bool, format any) (<-chan string, error) {
 	body := generateRequest{
 		Model:  model,
 		Prompt: prompt,
 		Stream: stream,
+		Format: format,
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {

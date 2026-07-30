@@ -516,7 +516,7 @@ func runDryRunOllama(ctx context.Context, client *ollama.Client, cfg *types.Conf
 
 func checkModel(ctx context.Context, client *ollama.Client, model string) string {
 	// Use a minimal prompt to test if the model exists.
-	ch, err := client.Generate(ctx, model, "test", false)
+	ch, err := client.Generate(ctx, model, "test", false, nil)
 	if err != nil {
 		return cli.Warning(fmt.Sprintf("Model %s: UNAVAILABLE — %v", model, err))
 	}

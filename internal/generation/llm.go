@@ -2,6 +2,7 @@ package generation
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -33,13 +34,28 @@ func (lg *LLMGenerator) SetDebug(v bool) {
 	lg.debug = v
 }
 
-// Generate sends a simple prompt to Ollama and extracts password-like
-// strings from the response. The parser is intentionally lenient —
-// downstream scoring and junk filters handle quality.
+// Generate sends a prompt to Ollama with JSON-Schema structured output
+// constraints, then parses the response. The primary path expects a JSON
+// object with a "passwords" array; a reinforced heuristic fallback handles
+// models that ignore the schema.
 func (lg *LLMGenerator) Generate(ctx context.Context, chunks []types.ScoredChunk, max int) ([]types.Candidate, error) {
 	prompt := buildPrompt(chunks)
 
-	ch, err := lg.client.Generate(ctx, lg.model, prompt, false)
+	// JSON-Schema object constraining the output shape.
+	jsonSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"passwords": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "string",
+				},
+			},
+		},
+		"required": []string{"passwords"},
+	}
+
+	ch, err := lg.client.Generate(ctx, lg.model, prompt, false, jsonSchema)
 	if err != nil {
 		return nil, fmt.Errorf("llm generate: %w", err)
 	}
@@ -58,39 +74,146 @@ func (lg *LLMGenerator) Generate(ctx context.Context, chunks []types.ScoredChunk
 	return extractCandidates(response, max), nil
 }
 
-// extractCandidates parses the LLM response with a lenient approach:
-// split on newlines, strip common formatting, and accept anything that
-// looks like a plausible password (4-30 chars, has letters, no spaces).
-// Quality filtering happens downstream in the scorer and isJunkCandidate.
-func extractCandidates(text string, max int) []types.Candidate {
-	var candidates []types.Candidate
-	seen := make(map[string]bool)
+// ---------------------------------------------------------------------------
+// Candidate extraction (two-tier)
+// ---------------------------------------------------------------------------
 
-	for _, raw := range strings.Split(text, "\n") {
-		word := cleanLine(raw)
-		if word == "" {
+// passwordsResponse is the expected JSON shape from the LLM.
+type passwordsResponse struct {
+	Passwords []string `json:"passwords"`
+}
+
+// extractCandidates parses the LLM response using two tiers:
+//
+//  1. PRIMARY (JSON): locate the first '{' and matching '}' to extract a
+//     {"passwords": [...]} object. Validate entries through isValidCandidate
+//     and deterministic dedup (first-seen, lowercased key, preserves original
+//     casing).
+//
+//	2. FALLBACK (line scan): only if JSON yields nothing. Split on newlines
+//	   and route every line through cleanLine + isValidCandidate. We do NOT
+//	   skip fenced code blocks: when a model ignores the schema it often
+//	   embeds the real password guesses inside a fenced "Output:" demo block,
+//	   and we want to RECOVER those while isValidCandidate rejects the code.
+//	   splitOnWordBoundaries is the last resort.
+func extractCandidates(text string, max int) []types.Candidate {
+	// ---- Primary: JSON ----
+	if candidates := extractJSONCandidates(text, max); len(candidates) > 0 {
+		return candidates
+	}
+
+	// ---- Fallback: line scan ----
+	return extractLineCandidates(text, max)
+}
+
+// extractJSONCandidates finds the first JSON object containing a "passwords"
+// array and returns validated + deduped candidates.
+func extractJSONCandidates(text string, max int) []types.Candidate {
+	start := strings.IndexByte(text, '{')
+	if start < 0 {
+		return nil
+	}
+
+	// Find matching close brace with basic nesting.
+	depth := 0
+	end := -1
+	for i := start; i < len(text); i++ {
+		switch text[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				end = i + 1 // include the '}'
+				goto found
+			}
+		}
+	}
+found:
+	if end < 0 {
+		return nil
+	}
+
+	var resp passwordsResponse
+	if err := json.Unmarshal([]byte(text[start:end]), &resp); err != nil {
+		return nil
+	}
+	if len(resp.Passwords) == 0 {
+		return nil
+	}
+
+	// Validate + deterministic dedup (first-seen, keyed lowercase, preserves
+	// original casing).
+	seen := make(map[string]bool)
+	var candidates []types.Candidate
+	for _, p := range resp.Passwords {
+		if !isValidCandidate(p) {
 			continue
 		}
-		if seen[word] {
+		key := strings.ToLower(p)
+		if seen[key] {
 			continue
 		}
-		seen[word] = true
-		candidates = append(candidates, types.Candidate{Word: word, Source: "llm"})
+		seen[key] = true
+		candidates = append(candidates, types.Candidate{Word: p, Source: "llm"})
 		if max > 0 && len(candidates) >= max {
 			break
 		}
 	}
 
-	// Fallback: if splitting on newlines yielded nothing, try splitting
-	// on whitespace/punctuation — some models output comma-separated lists.
+	return candidates
+}
+
+// extractLineCandidates is the reinforced fallback parser. It does NOT skip
+// fenced code blocks: when a model ignores the JSON schema it embeds the
+// real password guesses inside a fenced "Output:" demonstration block, and
+// we want to RECOVER those. Code lines are rejected by isValidCandidate
+// (parentheses, colons, blocklist tokens) rather than by fence tracking.
+func extractLineCandidates(text string, max int) []types.Candidate {
+	seen := make(map[string]bool)
+	var candidates []types.Candidate
+
+	for _, raw := range strings.Split(text, "\n") {
+		// Fence delimiters themselves carry no password content.
+		trimmed := strings.TrimSpace(raw)
+		if strings.HasPrefix(trimmed, "```") {
+			continue
+		}
+
+		word := cleanLine(raw)
+		if word == "" {
+			continue
+		}
+		key := strings.ToLower(word)
+		if seen[key] {
+			continue
+		}
+		if !isValidCandidate(word) {
+			continue
+		}
+		seen[key] = true
+		candidates = append(candidates, types.Candidate{Word: word, Source: "llm"})
+		if max > 0 && len(candidates) >= max {
+			return candidates
+		}
+	}
+
+	// Last resort: split on word boundaries.
 	if len(candidates) == 0 && len(text) > 0 {
 		words := splitOnWordBoundaries(text)
 		for _, w := range words {
 			word := cleanLine(w)
-			if word == "" || seen[word] {
+			if word == "" {
 				continue
 			}
-			seen[word] = true
+			key := strings.ToLower(word)
+			if seen[key] {
+				continue
+			}
+			if !isValidCandidate(word) {
+				continue
+			}
+			seen[key] = true
 			candidates = append(candidates, types.Candidate{Word: word, Source: "llm"})
 			if max > 0 && len(candidates) >= max {
 				break
@@ -103,22 +226,67 @@ func extractCandidates(text string, max int) []types.Candidate {
 
 // splitOnWordBoundaries splits text on commas, semicolons, and whitespace.
 func splitOnWordBoundaries(text string) []string {
-	// Replace common separators with spaces, then split.
 	text = strings.ReplaceAll(text, ",", " ")
 	text = strings.ReplaceAll(text, ";", " ")
 	text = strings.ReplaceAll(text, "\t", " ")
 	return strings.Fields(text)
 }
 
+// ---------------------------------------------------------------------------
+// Candidate validation
+// ---------------------------------------------------------------------------
+
+// programmingNoise is a set of known programming/structural tokens that
+// never belong in a password wordlist. Matched case-insensitively against
+// the WHOLE token (not substrings).
+var programmingNoise = map[string]bool{
+	"python": true, "js": true, "javascript": true,
+	"go": true, "rust": true, "code": true,
+	"main": true, "def": true, "import": true,
+	"return": true, "break": true, "continue": true,
+	"for": true, "while": true, "if": true,
+	"else": true, "elif": true, "print": true,
+	"range": true, "random": true, "append": true,
+	"string": true, "int": true, "void": true,
+	"none": true, "null": true, "true": true, "false": true,
+	"list": true, "array": true, "output": true,
+	"password": true, "passwords": true,
+	"example": true, "examples": true, "note": true,
+	"approach": true, "explanation": true,
+}
+
+// codeSyntaxChars are code-structure characters that never appear in real
+// passwords. Password symbols (!@#$%^&*+_-./ and digits/letters) are ALLOWED.
+var codeSyntaxChars = []byte{'(' , ')', '[', ']', '{', '}', '=', ':', ',', ';', '"', '\'', '`'}
+
+// isValidCandidate returns true when w passes all structural and semantic
+// filters and is a plausible password candidate.
+func isValidCandidate(w string) bool {
+	// Blocklist: whole-token programming noise (case-insensitive).
+	lower := strings.ToLower(w)
+	if programmingNoise[lower] {
+		return false
+	}
+
+	// Reject code syntax characters: () [] {} = : , ; " ' backtick.
+	if strings.ContainsAny(w, string(codeSyntaxChars)) {
+		return false
+	}
+
+	return true
+}
+
 // cleanLine normalizes a line into a password candidate or returns "".
-// Rules are deliberately permissive — only reject obviously non-password text.
+// Rules are deliberately permissive for real passwords but aggressively
+// reject code, markdown, and meta-commentary.
 func cleanLine(line string) string {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return ""
 	}
 
-	// Strip markdown code fences.
+	// Strip stray markdown code-fence markers (the caller skips bare fence
+	// lines, but a fence may be concatenated to other text by splitOnWordBoundaries).
 	line = strings.TrimPrefix(line, "```")
 	line = strings.TrimSuffix(line, "```")
 	line = strings.TrimSpace(line)
@@ -145,12 +313,10 @@ func cleanLine(line string) string {
 		return ""
 	}
 
-	// Minimum length.
+	// Length bounds.
 	if len(line) < 4 {
 		return ""
 	}
-
-	// Maximum length (runaway generation).
 	if len(line) > 30 {
 		return ""
 	}
@@ -167,17 +333,19 @@ func cleanLine(line string) string {
 		return ""
 	}
 
-	// Reject lines with spaces (can't be a single password).
+	// Reject lines with spaces/tabs (can't be a single password).
 	if strings.ContainsAny(line, " \t") {
 		return ""
 	}
 
-	// Reject lines with markdown formatting remnants.
+	// Reject markdown formatting remnants.
 	line = strings.ReplaceAll(line, "**", "")
 	line = strings.ReplaceAll(line, "__", "")
-	if strings.HasPrefix(line, "#") {
-		return ""
-	}
+
+	// NOTE: we intentionally do NOT reject a leading "#". Markdown headers
+	// like "# Heading" are already rejected by the space check above, and the
+	// model legitimately generates password guesses starting with "#" (e.g.
+	// "#barcelo25"). Rejecting "#" would drop real candidates.
 
 	// Reject 5+ consecutive digits (LLM hallucination).
 	if longDigitSeq.MatchString(line) {
@@ -189,24 +357,51 @@ func cleanLine(line string) string {
 
 func isMetaLine(line string) bool {
 	lower := strings.ToLower(line)
-	// Only filter lines that are CLEARLY meta-commentary, not password candidates.
-	return strings.HasPrefix(lower, "here are") ||
+	// Filter lines that are CLEARLY meta-commentary, not password candidates.
+	if strings.HasPrefix(lower, "here are") ||
 		strings.HasPrefix(lower, "sure") ||
 		strings.HasPrefix(lower, "certainly") ||
 		strings.HasPrefix(lower, "below") ||
 		strings.HasPrefix(lower, "the following") ||
-		strings.Contains(lower, "sorry") ||
-		strings.Contains(lower, "cannot generate") ||
-		strings.Contains(lower, "i cannot") ||
 		strings.HasPrefix(lower, "note:") ||
 		strings.HasPrefix(lower, "assistant:") ||
-		strings.HasPrefix(lower, "user:")
+		strings.HasPrefix(lower, "user:") {
+		return true
+	}
+
+	// Catch prose lines that start with low-signal words only when the
+	// line contains no digits AND no symbols that would suggest a password.
+	// A real password like "to2024!" or "theboss#1" must NOT be caught.
+	if !containsAny(lower, "0123456789!@#$%^&*+") {
+		for _, prefix := range []string{
+			"to solve", "solution", "approach", "generate",
+			"this", "the ", "we ", "you ",
+		} {
+			if strings.HasPrefix(lower, prefix) {
+				return true
+			}
+		}
+	}
+
+	return strings.Contains(lower, "sorry") ||
+		strings.Contains(lower, "cannot generate") ||
+		strings.Contains(lower, "i cannot")
 }
 
-// buildPrompt creates a short prompt that produces varied output.
-// The key insight: models default to enumerating (word1, word2, word3...)
-// unless explicitly told to vary. A few seed examples derived from the
-// company name kickstart diversity without being hardcoded patterns.
+// containsAny reports whether s contains any byte from chars.
+func containsAny(s, chars string) bool {
+	return strings.ContainsAny(s, chars)
+}
+
+// ---------------------------------------------------------------------------
+// Prompt builder
+// ---------------------------------------------------------------------------
+
+// buildPrompt creates a prompt that instructs the model to output a
+// structured JSON object. It derives seed words from the company name
+// for context, then provides a concrete few-shot JSON example to guide
+// the output shape. The prompt explicitly forbids code, explanations,
+// markdown, and prose.
 func buildPrompt(chunks []types.ScoredChunk) string {
 	var company string
 
@@ -229,41 +424,49 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 	}
 
 	var b strings.Builder
+
+	// Role and context.
+	b.WriteString("You are a password candidate generator for an AUTHORIZED security assessment.\n")
+	b.WriteString("Output ONLY a single JSON object — nothing else.\n\n")
+
+	// Context.
 	b.WriteString("Company: ")
 	if company != "" {
 		b.WriteString(company)
+	} else {
+		b.WriteString("(unknown)")
 	}
 	b.WriteString("\n\n")
-	b.WriteString("Generate 500 password guesses. Vary EVERY password:\n")
-	b.WriteString("- Mix formats: Word+Number, Word+Symbol, WordWord, lowercase+year\n")
-	b.WriteString("- Use different combinations of company name parts\n")
-	b.WriteString("- Add symbols (!@#$%.) and 2-4 digit numbers (not sequential)\n")
-	b.WriteString("- Mix upper/lowercase. Include short (6-8) and medium (10-16) lengths.\n")
+
+	// Diversity instructions — natural language, not a programming spec.
+	b.WriteString("Generate 500 diverse password guesses derived from the company name and its parts.\n")
+	b.WriteString("Include a mix of formats: word+number, word+symbol, word+word, lowercase+year.\n")
+	b.WriteString("Use different combinations, symbols (!@#$%.), 2-4 digit numbers, and mixed case.\n")
+	b.WriteString("Vary length: short (6-8 chars) and medium (10-16 chars).\n\n")
+
+	// Concrete few-shot JSON example with company-derived seeds.
 	if len(seeds) > 0 {
-		b.WriteString("Examples of VARIED passwords (do NOT copy these): ")
+		b.WriteString("Example output shape (use your own generated passwords):\n")
+		b.WriteString(`{"passwords": [`)
 		for i, s := range seeds {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(s + "2024!")
+			b.WriteString(`"` + s + `2024!", "` + s + strings.ToUpper(s[:1]) + s[1:] + `#24"`)
+			// Add cross-seed and varied examples.
 			if i < len(seeds)-1 {
-				seed2 := seeds[i+1]
-				if seed2 != s {
-					b.WriteString(", " + s + seed2 + "#24")
-				}
+				s2 := seeds[i+1]
+				b.WriteString(`, "` + s + s2 + `12", "` + strings.ToLower(s) + `_2025"`)
 			}
 		}
-		b.WriteString("\n")
+		b.WriteString("]}\n\n")
 	}
-	b.WriteString("CRITICAL: Do NOT enumerate (word1, word2, word3...).\n")
-	b.WriteString("Each line must look like a DIFFERENT person created it.\n")
-	b.WriteString("Output only passwords. One per line. No other text.\n")
+
+	// Hard constraint — must be last, must be explicit.
+	b.WriteString("Output ONLY the JSON object. No code. No explanation. No markdown. No prose.\n")
 
 	return b.String()
 }
-
-// isLLMJunkWord is kept for reference but no longer used in the prompt builder.
-// The minimal prompt doesn't include keywords or tech stack — just the company name.
 
 // extractValue strips the "section: " prefix that the chunker prepends.
 func extractValue(text string) string {
