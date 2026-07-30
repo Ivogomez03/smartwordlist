@@ -34,64 +34,42 @@ func NewLLMGenerator(client *ollama.Client, model string) *LLMGenerator {
 	return &LLMGenerator{client: client, model: model}
 }
 
-// Generate builds a prompt from RAG chunks, calls Ollama in streaming mode,
-// and parses password candidates incrementally as tokens arrive.
-// Streaming mode gives real-time progress feedback — especially important
-// for large models where generation can take minutes. With the strict
-// structural prompt, streaming produces equally good output.
+// Generate builds a prompt from RAG chunks, calls Ollama in non-streaming
+// mode, and parses the complete response. Non-streaming is used because it
+// reliably produces complete lines with proper newline separation — streaming
+// mode can produce garbled line boundaries that cause zero candidates with
+// some models. The spinner in main.go provides progress feedback during the
+// wait, and the prompt's strict structure rules ensure output quality.
 func (lg *LLMGenerator) Generate(ctx context.Context, chunks []types.ScoredChunk, max int) ([]types.Candidate, error) {
 	prompt := buildPrompt(chunks)
 
-	ch, err := lg.client.Generate(ctx, lg.model, prompt, true)
+	ch, err := lg.client.Generate(ctx, lg.model, prompt, false)
 	if err != nil {
 		return nil, fmt.Errorf("llm generate: %w", err)
 	}
 
-	// Parse tokens incrementally — process complete lines as they arrive.
-	var candidates []types.Candidate
-	var buf strings.Builder
-	seen := make(map[string]bool)
-	lineCount := 0
-
+	// Collect the full response.
+	var full strings.Builder
 	for token := range ch {
-		buf.WriteString(token)
-
-		// Extract complete lines from the buffer.
-		for {
-			content := buf.String()
-			idx := strings.IndexByte(content, '\n')
-			if idx < 0 {
-				break // No complete line yet.
-			}
-			line := content[:idx]
-			buf.Reset()
-			if idx+1 < len(content) {
-				buf.WriteString(content[idx+1:])
-			}
-
-			cand := cleanCandidate(line)
-			if cand == "" {
-				continue
-			}
-			if seen[cand] {
-				continue
-			}
-			seen[cand] = true
-			candidates = append(candidates, types.Candidate{Word: cand, Source: "llm"})
-			lineCount++
-			if max > 0 && len(candidates) >= max {
-				// Drain the channel so Ollama doesn't block.
-				for range ch {
-				}
-				return candidates, nil
-			}
-		}
+		full.WriteString(token)
 	}
+	response := full.String()
 
-	// Process any remaining partial line.
-	if remainder := strings.TrimSpace(buf.String()); remainder != "" {
-		if cand := cleanCandidate(remainder); cand != "" && !seen[cand] {
-			candidates = append(candidates, types.Candidate{Word: cand, Source: "llm"})
+	// Parse lines through cleanCandidate for sanitization.
+	var candidates []types.Candidate
+	seen := make(map[string]bool)
+	for _, line := range strings.Split(response, "\n") {
+		cand := cleanCandidate(line)
+		if cand == "" {
+			continue
+		}
+		if seen[cand] {
+			continue
+		}
+		seen[cand] = true
+		candidates = append(candidates, types.Candidate{Word: cand, Source: "llm"})
+		if max > 0 && len(candidates) >= max {
+			break
 		}
 	}
 
