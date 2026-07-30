@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Ivogomez03/smartwordlist/internal/filter"
 )
 
 // robotsTimeout is the HTTP client timeout for fetching robots and sitemap.
@@ -50,7 +52,7 @@ func fetchRobotsAndSitemap(ctx context.Context, domain string) ([]string, error)
 		paths = append(paths, sitemapPaths...)
 	}
 
-	return deduplicateStrings(paths), nil
+	return filter.Deduplicate(paths), nil
 }
 
 // parseRobotsTxt fetches https://{domain}/robots.txt and extracts the path

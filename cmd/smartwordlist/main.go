@@ -26,11 +26,11 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Ivogomez03/smartwordlist/internal/cli"
+	"github.com/Ivogomez03/smartwordlist/internal/filter"
 	"github.com/Ivogomez03/smartwordlist/internal/export"
 	"github.com/Ivogomez03/smartwordlist/internal/generation"
 	"github.com/Ivogomez03/smartwordlist/internal/ollama"
@@ -338,7 +338,7 @@ func run(cmd *cobra.Command, args []string) error {
 	// Filter obvious junk before scoring.
 	filtered := make([]types.Candidate, 0, len(enriched.candidates))
 	for _, c := range enriched.candidates {
-		if !isJunkCandidate(c.Word) {
+		if !filter.IsJunkCandidate(c.Word) {
 			filtered = append(filtered, c)
 		}
 	}
@@ -764,9 +764,9 @@ func extractContextWords(r *types.ReconResult) []string {
 	}
 	var words []string
 	// Split company name into individual words.
-	for _, part := range strings.Fields(r.Company) {
+		for _, part := range strings.Fields(r.Company) {
 		part = strings.ToLower(strings.TrimSpace(part))
-		if len(part) > 2 && !isJunkWord(part) {
+		if len(part) > 2 && !filter.IsJunkWord(part) {
 			words = append(words, part)
 		}
 	}
@@ -775,7 +775,7 @@ func extractContextWords(r *types.ReconResult) []string {
 	for _, kw := range r.Keywords {
 		kw = strings.ToLower(strings.TrimSpace(kw))
 		// Skip domain-like keywords — they produce junk passwords.
-		if len(kw) > 2 && !isJunkWord(kw) && !strings.Contains(kw, ".") {
+		if len(kw) > 2 && !filter.IsJunkWord(kw) && !strings.Contains(kw, ".") {
 			words = append(words, kw)
 		}
 	}
@@ -783,29 +783,14 @@ func extractContextWords(r *types.ReconResult) []string {
 	for _, sd := range r.Subdomains {
 		prefix, _, _ := strings.Cut(sd, ".")
 		prefix = strings.ToLower(strings.TrimSpace(prefix))
-		if prefix != "" && prefix != "www" && len(prefix) > 2 && !isJunkWord(prefix) {
+		if prefix != "" && prefix != "www" && len(prefix) > 2 && !filter.IsJunkWord(prefix) {
 			words = append(words, prefix)
 		}
 	}
-	return dedupeStrings(words)
+	return filter.Deduplicate(words)
 }
 
-// isJunkWord returns true for words that are too generic to be useful
-// as password base words.
-func isJunkWord(w string) bool {
-	junk := map[string]bool{
-		"the": true, "and": true, "for": true, "new": true, "all": true,
-		"our": true, "its": true, "has": true, "are": true, "was": true,
-		"can": true, "not": true, "you": true, "your": true, "from": true,
-		"that": true, "this": true, "with": true, "have": true, "been": true,
-		"will": true, "more": true, "page": true, "home": true, "site": true,
-		"need": true, "run": true, "app": true, "api": true, "use": true,
-		"get": true, "one": true, "two": true, "see": true, "now": true,
-		"com": true, "org": true, "net": true, "www": true,
-		"enable": true, "javascript": true, "cookie": true, "function": true,
-	}
-	return junk[strings.ToLower(strings.TrimSpace(w))]
-}
+
 
 // cleanTechWord strips version numbers and common prefixes from technology names.
 func cleanTechWord(t string) string {
@@ -862,59 +847,7 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
-func dedupeStrings(ss []string) []string {
-	seen := make(map[string]bool, len(ss))
-	out := make([]string, 0, len(ss))
-	for _, s := range ss {
-		if s == "" {
-			continue
-		}
-		if !seen[s] {
-			seen[s] = true
-			out = append(out, s)
-		}
-	}
-	return out
-}
 
-// isJunkCandidate returns true for candidates that are obviously not
-// real passwords. It filters whitespace, very short words, purely numeric
-// strings, and strings with no letters at all.
-func isJunkCandidate(w string) bool {
-	if strings.ContainsAny(w, " \t\n\r") {
-		return true
-	}
-	// Filter candidates shorter than 4 chars.
-	if len(w) < 4 {
-		return true
-	}
-	// Filter purely numeric candidates.
-	if isAllDigitsStr(w) {
-		return true
-	}
-	// Filter candidates that are only special chars.
-	hasLetter := false
-	for _, r := range w {
-		if unicode.IsLetter(r) {
-			hasLetter = true
-			break
-		}
-	}
-	if !hasLetter {
-		return true
-	}
-	return false
-}
-
-// isAllDigitsStr returns true when every rune in s is a digit.
-func isAllDigitsStr(s string) bool {
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return len(s) > 0
-}
 
 func joinStrings(ss []string, sep string) string {
 	result := ""

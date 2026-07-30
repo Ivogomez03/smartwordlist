@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Ivogomez03/smartwordlist/internal/filter"
 )
 
 // commonSubdomains are prefixed to the target domain during DNS enumeration.
@@ -45,7 +47,7 @@ func enumerateDNS(ctx context.Context, domain string) ([]string, error) {
 		// Check context before spawning goroutines.
 		select {
 		case <-ctx.Done():
-			return deduplicateStrings(found), ctx.Err()
+			return filter.Deduplicate(found), ctx.Err()
 		default:
 		}
 
@@ -72,7 +74,7 @@ func enumerateDNS(ctx context.Context, domain string) ([]string, error) {
 	// Errors from crt.sh are intentionally swallowed — the DNS results
 	// are still valid partial data.
 
-	return deduplicateStrings(found), nil
+	return filter.Deduplicate(found), nil
 }
 
 // resolves returns true when a hostname resolves to at least one IP address.
@@ -148,5 +150,5 @@ func crtShLookup(ctx context.Context, domain string) ([]string, error) {
 		}
 	}
 
-	return deduplicateStrings(subdomains), nil
+	return filter.Deduplicate(subdomains), nil
 }

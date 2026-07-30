@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/gocolly/colly/v2"
+
+	"github.com/Ivogomez03/smartwordlist/internal/filter"
 )
 
 // scrapeResult holds the structured output of a single HTML scrape pass.
@@ -298,9 +300,9 @@ func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
 	}
 
 	// Deduplicate
-	result.Technologies = deduplicateStrings(result.Technologies)
-	result.Keywords = deduplicateStrings(result.Keywords)
-	result.Emails = deduplicateStrings(result.Emails)
+	result.Technologies = filter.Deduplicate(result.Technologies)
+	result.Keywords = filter.Deduplicate(result.Keywords)
+	result.Emails = filter.Deduplicate(result.Emails)
 
 	// Diagnostic: report what was extracted.
 	fmt.Fprintf(os.Stderr, "[recon] HTML callbacks: %d | Title: %q | Company: %q | Keywords: %d | Techs: %d | Emails: %d\n",
@@ -325,7 +327,7 @@ func extractKeywords(text string, n int) []string {
 			continue
 		}
 		// Skip purely numeric tokens
-		if isNumeric(lower) {
+		if filter.IsAllDigits(lower) {
 			continue
 		}
 		freq[lower]++
@@ -373,16 +375,6 @@ func tokenize(text string) []string {
 	return tokens
 }
 
-// isNumeric reports whether s contains only digit characters.
-func isNumeric(s string) bool {
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return len(s) > 0
-}
-
 // extractCompanyFromTitle attempts to pull a company name from the first
 // segment of a <title> that uses common separator characters.
 func extractCompanyFromTitle(title string) string {
@@ -422,21 +414,4 @@ func extractCompanyFromCopyright(body string) string {
 	return ""
 }
 
-// deduplicateStrings removes duplicate entries from a slice, preserving
-// the order of first occurrence.
-func deduplicateStrings(in []string) []string {
-	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		if s == "" {
-			continue
-		}
-		key := strings.ToLower(strings.TrimSpace(s))
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, s)
-	}
-	return out
-}
+

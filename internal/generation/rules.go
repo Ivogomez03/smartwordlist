@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Ivogomez03/smartwordlist/internal/filter"
 	"github.com/Ivogomez03/smartwordlist/pkg/types"
 )
 
@@ -94,14 +95,14 @@ func (rg *RuleGenerator) collectWords() []string {
 	add(r.Company)
 	// Also split multi-word company names into individual tokens.
 	for _, part := range strings.Fields(r.Company) {
-		if len(part) > 2 && !isJunkWord(part) {
+		if len(part) > 2 && !filter.IsJunkWord(part) {
 			add(part)
 		}
 	}
 	// Technologies are NOT used as base words — they're context for the LLM,
 	// not something people put in passwords.
 	for _, k := range r.Keywords {
-		if !isJunkWord(k) {
+		if !filter.IsJunkWord(k) {
 			add(k)
 		}
 	}
@@ -120,7 +121,7 @@ func (rg *RuleGenerator) collectWords() []string {
 		}
 	}
 
-	return dedupeSlice(words)
+	return filter.Deduplicate(words)
 }
 
 // ---------------------------------------------------------------------------
@@ -141,37 +142,7 @@ func cleanWord(s string) string {
 	return s
 }
 
-// isJunkWord returns true for words that are too generic to be useful
-// as password base words. This includes common English function words,
-// tech noise, and web boilerplate terms scraped from pages.
-func isJunkWord(w string) bool {
-	w = strings.ToLower(w)
-	junk := map[string]bool{
-		"the": true, "and": true, "for": true, "new": true, "all": true,
-		"our": true, "its": true, "has": true, "are": true, "was": true,
-		"can": true, "not": true, "you": true, "your": true, "from": true,
-		"that": true, "this": true, "with": true, "have": true, "been": true,
-		"will": true, "more": true, "page": true, "home": true, "site": true,
-		"need": true, "run": true, "app": true, "api": true, "use": true,
-		"get": true, "one": true, "two": true, "see": true, "now": true,
-		"com": true, "org": true, "net": true, "www": true,
-		"enable": true, "javascript": true, "cookie": true, "function": true,
-		"brand": true, "center": true, "rights": true, "reserved": true,
-		"privacy": true, "policy": true, "terms": true, "contact": true,
-		"about": true, "search": true, "menu": true, "close": true,
-		"open": true, "login": true, "register": true, "sign": true,
-		"subscribe": true, "newsletter": true, "follow": true, "share": true,
-		"like": true, "comment": true, "download": true, "upload": true,
-		"click": true, "here": true, "link": true, "skip": true,
-		"content": true, "main": true, "navigation": true, "footer": true,
-		"header": true, "sidebar": true, "related": true, "previous": true,
-		"next": true, "back": true, "top": true, "read": true,
-		"view": true, "web": true, "website": true, "online": true,
-		"internet": true, "https": true, "http": true, "html": true,
-		"css": true,
-	}
-	return junk[w]
-}
+
 
 // accentMap maps common Spanish/Portuguese accented characters to ASCII.
 var accentMap = map[rune]rune{
@@ -271,7 +242,7 @@ func splitPath(path string) []string {
 		// Split on common separators: -, _, .
 		sub := splitByAny(part)
 		for _, s := range sub {
-			if len(s) >= 3 && !isOnlyDigits(s) {
+			if len(s) >= 3 && !filter.IsAllDigits(s) {
 				out = append(out, s)
 			}
 		}
@@ -314,24 +285,4 @@ func splitByAny(s string) []string {
 	return parts
 }
 
-func isOnlyDigits(s string) bool {
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
 
-// dedupeSlice returns a new slice with duplicate strings removed.
-func dedupeSlice(ss []string) []string {
-	seen := make(map[string]bool, len(ss))
-	out := make([]string, 0, len(ss))
-	for _, s := range ss {
-		if !seen[s] {
-			seen[s] = true
-			out = append(out, s)
-		}
-	}
-	return out
-}

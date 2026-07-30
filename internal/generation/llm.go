@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"unicode"
 
+	"github.com/Ivogomez03/smartwordlist/internal/filter"
 	"github.com/Ivogomez03/smartwordlist/internal/ollama"
 	"github.com/Ivogomez03/smartwordlist/pkg/types"
 )
@@ -91,7 +91,7 @@ func cleanCandidate(line string) string {
 		return ""
 	}
 	// Skip lines that are purely numeric.
-	if isAllDigits(line) {
+	if filter.IsAllDigits(line) {
 		return ""
 	}
 	// Skip lines that look like explanations or metadata.
@@ -99,15 +99,6 @@ func cleanCandidate(line string) string {
 		return ""
 	}
 	return line
-}
-
-func isAllDigits(s string) bool {
-	for _, r := range s {
-		if !unicode.IsDigit(r) {
-			return false
-		}
-	}
-	return len(s) > 0
 }
 
 func isMetaLine(line string) bool {
@@ -139,7 +130,7 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 			if v := extractValue(c.Text); v != "" && !strings.Contains(v, ".") {
 				v = strings.ToLower(strings.TrimSpace(v))
 				// Skip generic tech noise that produces weak passwords.
-				if isLLMJunkWord(v) {
+				if filter.IsJunkWord(v) {
 					continue
 				}
 				if techStr != "" {
@@ -152,7 +143,7 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 				v = strings.ToLower(strings.TrimSpace(v))
 				// Filter boilerplate web keywords so the model doesn't
 				// build passwords around "javascript" or "enable".
-				if isLLMJunkWord(v) {
+				if filter.IsJunkWord(v) {
 					continue
 				}
 				if kwStr != "" {
@@ -192,48 +183,6 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 	b.WriteString("Only output passwords. No explanations. No markdown.\n")
 
 	return b.String()
-}
-
-// isLLMJunkWord returns true for words that would pollute the LLM prompt
-// and cause the model to generate weak passwords. This is a superset of
-// the rule-engine junk filter and adds tech/generic terms.
-func isLLMJunkWord(w string) bool {
-	junk := map[string]bool{
-		// Function words and web boilerplate (same as rules.go isJunkWord)
-		"the": true, "and": true, "for": true, "new": true, "all": true,
-		"our": true, "its": true, "has": true, "are": true, "was": true,
-		"can": true, "not": true, "you": true, "your": true, "from": true,
-		"that": true, "this": true, "with": true, "have": true, "been": true,
-		"will": true, "more": true, "page": true, "home": true, "site": true,
-		"need": true, "run": true, "app": true, "api": true, "use": true,
-		"get": true, "one": true, "two": true, "see": true, "now": true,
-		"com": true, "org": true, "net": true, "www": true,
-		"enable": true, "javascript": true, "cookie": true, "function": true,
-		"brand": true, "center": true, "rights": true, "reserved": true,
-		"privacy": true, "policy": true, "terms": true, "contact": true,
-		"about": true, "search": true, "menu": true, "close": true,
-		"open": true, "login": true, "register": true, "sign": true,
-		"subscribe": true, "newsletter": true, "follow": true, "share": true,
-		"like": true, "comment": true, "download": true, "upload": true,
-		"click": true, "here": true, "link": true, "skip": true,
-		"content": true, "main": true, "navigation": true, "footer": true,
-		"header": true, "sidebar": true, "related": true, "previous": true,
-		"next": true, "back": true, "top": true, "read": true,
-		"view": true, "web": true, "website": true, "online": true,
-		"internet": true, "https": true, "http": true, "html": true,
-		"css": true, "internal": true,
-		// Tech stack — context only, not password material.
-		"nginx": true, "apache": true, "cloudflare": true, "plesk": true,
-		"plesklin": true, "cpanel": true, "wordpress": true, "jquery": true,
-		"bootstrap": true, "react": true, "vue": true, "angular": true,
-		"node": true, "express": true, "django": true, "laravel": true,
-		"php": true, "mysql": true, "postgres": true, "redis": true,
-		"docker": true, "kubernetes": true, "aws": true, "azure": true,
-		"google": true, "analytics": true, "tag": true, "manager": true,
-		"tech": true, "stack": true, "server": true, "hosting": true,
-		"host": true, "cdn": true, "dns": true, "ssl": true,
-	}
-	return junk[w]
 }
 
 // extractValue strips the "section: " prefix that the chunker prepends.
