@@ -42,21 +42,50 @@ func (rc *ReconCollector) Collect(ctx context.Context, domain string, path strin
 	errs := make([]error, 0, 3)
 
 	// ---- scrape goroutine ----
+	// When a custom path is set, scrape both the root (for company context)
+	// and the custom path (for login-specific tech/cookies) and merge results.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		scrapeRes, err := scrapeHTML(ctx, domain, path)
-		mu.Lock()
-		defer mu.Unlock()
-		if err != nil {
+
+		pathsToScrape := []string{"/"}
+		if path != "" && path != "/" {
+			pathsToScrape = append(pathsToScrape, path)
+		}
+
+		var merged *scrapeResult
+		var scrapeErr error
+		for _, p := range pathsToScrape {
+			res, err := scrapeHTML(ctx, domain, p)
+			if err != nil {
+				scrapeErr = err
+				continue
+			}
+			if merged == nil {
+				merged = res
+			} else {
+				merged = mergeScrapeResults(merged, res)
+			}
+		}
+
+		if merged == nil {
+			err := scrapeErr
+			if err == nil {
+				err = fmt.Errorf("all paths failed")
+			}
+			mu.Lock()
 			errs = append(errs, fmt.Errorf("scrape: %w", err))
+			mu.Unlock()
 			return
 		}
-		result.Title = scrapeRes.Title
-		result.Company = scrapeRes.Company
-		result.Keywords = scrapeRes.Keywords
-		result.Technologies = scrapeRes.Technologies
-		result.Emails = scrapeRes.Emails
+
+		mu.Lock()
+		result.Title = merged.Title
+		result.Company = merged.Company
+		result.Keywords = merged.Keywords
+		result.Technologies = merged.Technologies
+		result.Emails = merged.Emails
+		mu.Unlock()
 	}()
 
 	// ---- DNS goroutine ----

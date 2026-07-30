@@ -315,3 +315,53 @@ func TestExtractCompanyFromCopyright(t *testing.T) {
 		}
 	}
 }
+
+func TestMergeScrapeResults(t *testing.T) {
+	root := &scrapeResult{
+		Title:        "Acme Corp — Enterprise Widgets",
+		Company:      "Acme Corp",
+		Keywords:     []string{"widget", "cloud"},
+		Technologies: []string{"React", "Go"},
+		Emails:       []string{"info@acme.com"},
+	}
+	login := &scrapeResult{
+		Title:        "Login",
+		Company:      "",
+		Keywords:     []string{"credenciales", "usuario"},
+		Technologies: []string{"PHP", "PHPSESSID"},
+		Emails:       []string{"support@acme.com"},
+	}
+
+	merged := mergeScrapeResults(root, login)
+
+	if merged.Title != "Acme Corp — Enterprise Widgets" {
+		t.Errorf("Title = %q, want root's title", merged.Title)
+	}
+	if merged.Company != "Acme Corp" {
+		t.Errorf("Company = %q, want root's company", merged.Company)
+	}
+	for _, kw := range []string{"widget", "cloud", "credenciales", "usuario"} {
+		if !containsStr(merged.Keywords, kw) {
+			t.Errorf("Keywords should contain %q, got %v", kw, merged.Keywords)
+		}
+	}
+	for _, tech := range []string{"React", "Go", "PHP", "PHPSESSID"} {
+		if !containsStr(merged.Technologies, tech) {
+			t.Errorf("Technologies should contain %q, got %v", tech, merged.Technologies)
+		}
+	}
+	for _, email := range []string{"info@acme.com", "support@acme.com"} {
+		if !containsStr(merged.Emails, email) {
+			t.Errorf("Emails should contain %q, got %v", email, merged.Emails)
+		}
+	}
+}
+
+func containsStr(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}

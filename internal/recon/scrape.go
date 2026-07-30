@@ -22,6 +22,32 @@ type scrapeResult struct {
 	Emails       []string
 }
 
+// mergeScrapeResults combines two scrape results into one, taking the first
+// non-empty title and company, and merging keywords/technologies/emails as a
+// deduplicated union. Both a and b must be non-nil.
+func mergeScrapeResults(a, b *scrapeResult) *scrapeResult {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	merged := &scrapeResult{
+		Title:        a.Title,
+		Company:      a.Company,
+		Keywords:     deduplicateStrings(append(a.Keywords, b.Keywords...)),
+		Technologies: deduplicateStrings(append(a.Technologies, b.Technologies...)),
+		Emails:       deduplicateStrings(append(a.Emails, b.Emails...)),
+	}
+	if merged.Title == "" {
+		merged.Title = b.Title
+	}
+	if merged.Company == "" {
+		merged.Company = b.Company
+	}
+	return merged
+}
+
 // emailRegex matches RFC 5322-ish email addresses found in page text.
 // It is intentionally simpler than the full spec to avoid noise.
 var emailRegex = regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`)
