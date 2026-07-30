@@ -28,10 +28,13 @@ func NewReconCollector() *ReconCollector {
 // failure tolerance). The returned result may contain partial data when
 // some collectors fail.
 //
+// path is an optional URL path (e.g. "/login") for the initial scrape.
+// An empty string means the root path "/".
+//
 // The context controls cancellation, though sub-collectors honour it on a
 // best-effort basis (colly and net.LookupHost do not accept contexts
 // directly — the goroutine is the isolation boundary).
-func (rc *ReconCollector) Collect(ctx context.Context, domain string) (*types.ReconResult, error) {
+func (rc *ReconCollector) Collect(ctx context.Context, domain string, path string) (*types.ReconResult, error) {
 	result := &types.ReconResult{}
 
 	var wg sync.WaitGroup
@@ -42,7 +45,7 @@ func (rc *ReconCollector) Collect(ctx context.Context, domain string) (*types.Re
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		scrapeRes, err := scrapeHTML(ctx, domain)
+		scrapeRes, err := scrapeHTML(ctx, domain, path)
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {

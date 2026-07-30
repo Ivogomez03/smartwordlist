@@ -77,7 +77,7 @@ func TestScrapeHTML_ExtractsSpanishSite(t *testing.T) {
 	defer func() { scrapeTransport = nil }()
 
 	ctx := context.Background()
-	result, err := scrapeHTML(ctx, "cerrobayo.com.ar")
+	result, err := scrapeHTML(ctx, "cerrobayo.com.ar", "")
 	if err != nil {
 		t.Fatalf("scrapeHTML failed: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestScrapeHTML_HTTPError(t *testing.T) {
 	defer func() { scrapeTransport = nil }()
 
 	ctx := context.Background()
-	_, err := scrapeHTML(ctx, "failing.example.com")
+	_, err := scrapeHTML(ctx, "failing.example.com", "")
 	if err == nil {
 		t.Fatal("Expected error for HTTP 500, got nil")
 	}
@@ -151,7 +151,7 @@ func TestScrapeHTML_HTTPError(t *testing.T) {
 
 func TestScrapeHTML_ConnectionError(t *testing.T) {
 	ctx := context.Background()
-	_, err := scrapeHTML(ctx, "127.0.0.1:1")
+	_, err := scrapeHTML(ctx, "127.0.0.1:1", "")
 	if err == nil {
 		t.Fatal("Expected error for connection refused, got nil")
 	}
@@ -176,13 +176,51 @@ func TestScrapeHTML_ExtractsCompanyFromTitleFallback(t *testing.T) {
 	defer func() { scrapeTransport = nil }()
 
 	ctx := context.Background()
-	result, err := scrapeHTML(ctx, "empresax.com.ar")
+	result, err := scrapeHTML(ctx, "empresax.com.ar", "")
 	if err != nil {
 		t.Fatalf("scrapeHTML failed: %v", err)
 	}
 
 	if result.Company != "EmpresaX S.A." {
 		t.Errorf("Company = %q, want %q", result.Company, "EmpresaX S.A.")
+	}
+}
+
+func TestScrapeHTML_CustomPath(t *testing.T) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/login" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Set-Cookie", "PHPSESSID=abc123; Path=/")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`<!DOCTYPE html>
+<html>
+<head>
+	<title>Login — Acme Portal</title>
+	<meta name="author" content="Acme Corp" />
+</head>
+<body>
+	<p>Ingrese sus credenciales.</p>
+</body>
+</html>`))
+	}))
+	defer ts.Close()
+
+	scrapeTransport = testTransport(ts)
+	defer func() { scrapeTransport = nil }()
+
+	ctx := context.Background()
+	result, err := scrapeHTML(ctx, "portal.acme.com", "/login")
+	if err != nil {
+		t.Fatalf("scrapeHTML with custom path failed: %v", err)
+	}
+	if result.Title != "Login — Acme Portal" {
+		t.Errorf("Title = %q, want %q", result.Title, "Login — Acme Portal")
+	}
+	if result.Company != "Acme Corp" {
+		t.Errorf("Company = %q, want %q", result.Company, "Acme Corp")
 	}
 }
 
@@ -196,7 +234,7 @@ func TestScrapeHTML_NoContent(t *testing.T) {
 	defer func() { scrapeTransport = nil }()
 
 	ctx := context.Background()
-	result, err := scrapeHTML(ctx, "empty.example.com")
+	result, err := scrapeHTML(ctx, "empty.example.com", "")
 	if err != nil {
 		t.Fatalf("scrapeHTML should not error on empty 200: %v", err)
 	}

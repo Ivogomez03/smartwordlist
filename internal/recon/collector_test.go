@@ -73,7 +73,7 @@ func TestReconCollector_Collect(t *testing.T) {
 	// Test with a domain that will trigger HTTP errors (DNS and scraping will fail)
 	// but the test verifies the partial-failure tolerance.
 	ctx := context.Background()
-	result, err := collector.Collect(ctx, "test.invalid")
+	result, err := collector.Collect(ctx, "test.invalid", "")
 
 	if err != nil && strings.Contains(err.Error(), "all collectors failed") {
 		// This is expected — all three goroutines failed on a fake domain.
@@ -108,7 +108,7 @@ func TestReconCollector_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately.
 
-	_, err := collector.Collect(ctx, "example.com")
+	_, err := collector.Collect(ctx, "example.com", "")
 	// Context cancellation should propagate to sub-collectors.
 	// DNS enumeration checks ctx.Done() before spawning goroutines.
 	// Scraping and robots may still run (colly doesn't accept contexts).

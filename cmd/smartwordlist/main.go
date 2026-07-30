@@ -90,6 +90,7 @@ func init() {
 	rootCmd.Flags().String("model", envOrDefault("SMARTWORDLIST_MODEL", defaultOllamaModel), "Ollama LLM model name")
 	rootCmd.Flags().String("embedding-model", envOrDefault("SMARTWORDLIST_EMBED_MODEL", defaultEmbedModel), "Ollama embedding model name")
 	rootCmd.Flags().Bool("dry-run-ollama", false, "Check Ollama health and model availability, then exit")
+	rootCmd.Flags().String("path", "", "Custom URL path for reconnaissance (e.g. /login). Default: /")
 	rootCmd.Flags().Duration("ollama-timeout", 0, "Ollama HTTP client timeout (0 = default 600s, env: SMARTWORDLIST_OLLAMA_TIMEOUT)")
 	rootCmd.Flags().Duration("pipeline-timeout", 0, "Maximum total pipeline duration (0 = default 10m, env: SMARTWORDLIST_PIPELINE_TIMEOUT)")
 }
@@ -109,6 +110,7 @@ func run(cmd *cobra.Command, args []string) error {
 	modelName, _ := cmd.Flags().GetString("model")
 	embedModel, _ := cmd.Flags().GetString("embedding-model")
 	dryRunOllama, _ := cmd.Flags().GetBool("dry-run-ollama")
+	path, _ := cmd.Flags().GetString("path")
 
 	ollamaTimeout, _ := cmd.Flags().GetDuration("ollama-timeout")
 	if ollamaTimeout == 0 {
@@ -145,6 +147,7 @@ func run(cmd *cobra.Command, args []string) error {
 		RulesPath:     rulesPath,
 		Model:         modelName,
 		EmbedModel:    embedModel,
+		Path:          path,
 		DryRunOllama:  dryRunOllama,
 	}
 
@@ -159,6 +162,9 @@ func run(cmd *cobra.Command, args []string) error {
 
 	fmt.Print(cli.Banner())
 	fmt.Println(cli.Info(fmt.Sprintf("Target domain: %s", cfg.Domain)))
+	if cfg.Path != "" {
+		fmt.Println(cli.Info(fmt.Sprintf("Target path: %s", cfg.Path)))
+	}
 	if cfg.Output != "" {
 		fmt.Println(cli.Info(fmt.Sprintf("Output file: %s", cfg.Output)))
 	}
@@ -258,7 +264,7 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 		phaseStart := time.Now()
 		collector := recon.NewReconCollector()
-		result, err := collector.Collect(ctx, domain)
+		result, err := collector.Collect(ctx, domain, cfg.Path)
 		if err != nil {
 			errCh <- fmt.Errorf("reconnaissance: %w", err)
 			close(reconResultCh)

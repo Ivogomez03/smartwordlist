@@ -121,9 +121,10 @@ var titleCompanySeps = []string{" | ", " - ", " — ", " · ", " :: ", " : "}
 // disable TLS verification.
 var scrapeTransport http.RoundTripper
 
-// scrapeHTML fetches the domain's homepage with colly and extracts
+// scrapeHTML fetches the target page with colly and extracts
 // title, company name, keywords, detected technologies, and email addresses.
-func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
+// When path is empty the domain root ("/") is used.
+func scrapeHTML(ctx context.Context, domain string, path string) (*scrapeResult, error) {
 	c := colly.NewCollector(
 		colly.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
 	)
@@ -262,7 +263,11 @@ func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
 
 	// ---- visit ----
 
-	url := "https://" + domain
+	targetPath := path
+	if targetPath == "" {
+		targetPath = "/"
+	}
+	url := "https://" + domain + targetPath
 	cVisitErr := c.Visit(url)
 
 	// Prefer the status-aware error when available; colly's Visit error on

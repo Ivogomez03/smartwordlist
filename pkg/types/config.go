@@ -21,6 +21,9 @@ type Config struct {
 	Model string
 	// EmbedModel is the Ollama embedding model name (e.g. "nomic-embed-text").
 	EmbedModel string
+	// Path is an optional URL path (e.g. "/login") for the initial scrape target.
+	// Empty means the root path "/".
+	Path string
 	// DryRunOllama skips the pipeline and only checks Ollama health + model availability.
 	DryRunOllama bool
 }
