@@ -14,6 +14,14 @@ import (
 // llmNumberPrefix matches lines that the model numbered — e.g. "28. password".
 var llmNumberPrefix = regexp.MustCompile(`^\d+[.)]\s*`)
 
+// longDigitSeq matches 5 or more consecutive digits — a clear sign of
+// LLM hallucination where the model generates endless number sequences.
+var longDigitSeq = regexp.MustCompile(`\d{5,}`)
+
+// maxPasswordLen is the maximum allowed password length. Longer passwords
+// are almost always LLM hallucinations (runaway generation).
+const maxPasswordLen = 24
+
 // LLMGenerator produces password candidates by sending a RAG-enhanced prompt
 // to an Ollama language model and parsing the response line by line.
 type LLMGenerator struct {
@@ -62,7 +70,9 @@ func (lg *LLMGenerator) Generate(ctx context.Context, chunks []types.ScoredChunk
 }
 
 // cleanCandidate normalizes a line into a valid password candidate,
-// returning "" if the line should be discarded.
+// returning "" if the line should be discarded. Also applies post-generation
+// sanitization to catch LLM hallucinations (long digit sequences, excessive
+// length, keyword concatenations).
 func cleanCandidate(line string) string {
 	line = strings.TrimSpace(line)
 	if line == "" {
@@ -94,11 +104,73 @@ func cleanCandidate(line string) string {
 	if isAllDigits(line) {
 		return ""
 	}
-	// Skip lines that look like explanations or metadata.
-	if strings.Count(line, " ") > 0 {
+
+	// --- Post-generation sanitization ---
+
+	// Reject 5+ consecutive digits (LLM hallucination: "1234567890").
+	if longDigitSeq.MatchString(line) {
 		return ""
 	}
+
+	// Reject passwords longer than 24 chars (runaway generation).
+	if len(line) > maxPasswordLen {
+		return ""
+	}
+
+	// Reject excessive keyword concatenation: 3+ alternating upper/lower
+	// word boundaries without any digit or symbol usually means the LLM
+	// glued random keywords together (e.g., "AppRunNginxDeployTest").
+	if isKeywordConcat(line) {
+		return ""
+	}
+
 	return line
+}
+
+// isKeywordConcat returns true when the candidate appears to be 3 or more
+// English words concatenated without any digits or special characters —
+// a common LLM hallucination pattern.
+func isKeywordConcat(w string) bool {
+	// Only check candidates with no digits and no special chars —
+	// those are the ones at risk of being pure word concatenation.
+	if containsDigit(w) || containsSpecial(w) {
+		return false
+	}
+	// Count CamelCase word boundaries (uppercase letter preceded by lowercase).
+	wordCount := 1
+	runes := []rune(w)
+	for i := 1; i < len(runes); i++ {
+		if unicode.IsUpper(runes[i]) && unicode.IsLower(runes[i-1]) {
+			wordCount++
+		}
+	}
+	// Also split on common separators.
+	for _, r := range runes {
+		if r == '_' || r == '-' {
+			wordCount++
+		}
+	}
+	return wordCount >= 3 && len(w) > 12
+}
+
+// containsDigit reports whether s contains at least one ASCII digit.
+func containsDigit(s string) bool {
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
+// containsSpecial reports whether s contains a non-letter, non-digit rune.
+func containsSpecial(s string) bool {
+	for _, r := range s {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
 }
 
 func isAllDigits(s string) bool {
@@ -179,17 +251,24 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 		b.WriteString(kwStr)
 		b.WriteString("\n")
 	}
-	b.WriteString("\nYou are generating password guesses for security testing.\n")
-	b.WriteString("Generate 500 password candidates for this company. One per line.\n")
-	b.WriteString("Base passwords on: brand name, products, company culture, industry terms.\n")
-	b.WriteString("Keywords and tech stack are CONTEXT — use them to understand the company,\n")
-	b.WriteString("NOT as direct base words. Do NOT create passwords like \"EnableNginx123\"\n")
-	b.WriteString("or \"NeedJavaScript\" — those are website boilerplate, not real passwords.\n")
-	b.WriteString("Include: creative combinations, internal project names, brand+location,\n")
-	b.WriteString("industry-specific terms, mixed languages if relevant (Spanish for this site).\n")
-	b.WriteString("Vary complexity: some short, some long, some with numbers/symbols.\n")
-	b.WriteString("Do NOT output the same base word with only year or symbol variations.\n")
-	b.WriteString("Only output passwords. No explanations. No markdown.\n")
+	b.WriteString("\nYou are a password auditor generating guesses for authorized security testing.\n")
+	b.WriteString("Generate 500 password candidates for this company. One per line.\n\n")
+	b.WriteString("STRUCTURE RULES — every password MUST follow this format:\n")
+	b.WriteString("  BaseWord + Number(2-4 digits) + Symbol(0-1)   OR\n")
+	b.WriteString("  BaseWord + Symbol(0-1) + Number(2-4 digits)\n\n")
+	b.WriteString("  BaseWord = brand name, product, location, industry term, or employee name pattern.\n")
+	b.WriteString("  Combine at most TWO words together (e.g., \"RonBarcelo\", \"BarceloPuntaCana\").\n")
+	b.WriteString("  NEVER concatenate three or more words without numbers or symbols.\n\n")
+	b.WriteString("DIGIT RULES — CRITICAL:\n")
+	b.WriteString("  Use ONLY 2-4 digits per password. Fine: \"2026\", \"24\", \"007\", \"42\".\n")
+	b.WriteString("  PROHIBITED: 5 or more consecutive digits. NEVER generate long number sequences like \"1234567890\".\n\n")
+	b.WriteString("LENGTH RULES:\n")
+	b.WriteString("  Passwords MUST be 6-24 characters long. NOT shorter, NOT longer.\n")
+	b.WriteString("  If a candidate would exceed 24 chars, STOP and generate a shorter one.\n\n")
+	b.WriteString("VARIETY: Mix simple (Ron2026!) and complex (BarceloImperial24) patterns.\n")
+	b.WriteString("Use Spanish/English terms where relevant. Include product names if known.\n")
+	b.WriteString("Every candidate MUST be different. NO repetition with only year changes.\n")
+	b.WriteString("Only output passwords. No explanations. No markdown. No numbering.\n")
 
 	return b.String()
 }

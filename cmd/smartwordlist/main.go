@@ -878,8 +878,9 @@ func dedupeStrings(ss []string) []string {
 }
 
 // isJunkCandidate returns true for candidates that are obviously not
-// real passwords. It filters whitespace, very short words, purely numeric
-// strings, and strings with no letters at all.
+// real passwords. Filters whitespace, very short words, purely numeric
+// strings, strings with no letters, long digit sequences (LLM hallucination),
+// and excessively long passwords.
 func isJunkCandidate(w string) bool {
 	if strings.ContainsAny(w, " \t\n\r") {
 		return true
@@ -888,8 +889,16 @@ func isJunkCandidate(w string) bool {
 	if len(w) < 4 {
 		return true
 	}
+	// Filter candidates longer than 24 chars — almost always LLM garbage.
+	if len(w) > 24 {
+		return true
+	}
 	// Filter purely numeric candidates.
 	if isAllDigitsStr(w) {
+		return true
+	}
+	// Filter candidates with 5+ consecutive digits — LLM hallucination.
+	if hasLongDigitSeq(w) {
 		return true
 	}
 	// Filter candidates that are only special chars.
@@ -902,6 +911,22 @@ func isJunkCandidate(w string) bool {
 	}
 	if !hasLetter {
 		return true
+	}
+	return false
+}
+
+// hasLongDigitSeq returns true when s contains 5 or more consecutive digits.
+func hasLongDigitSeq(s string) bool {
+	seq := 0
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			seq++
+			if seq >= 5 {
+				return true
+			}
+		} else {
+			seq = 0
+		}
 	}
 	return false
 }

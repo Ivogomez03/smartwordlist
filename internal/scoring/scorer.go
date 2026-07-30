@@ -171,22 +171,53 @@ func mixedCase(s string) bool {
 	return false
 }
 
-// penalizePredictable returns a penalty (0.0 to -3.0) for predictable
-// password patterns: year suffixes, trailing single symbols, long digit
-// sequences, and common weak number patterns like "123" or "000".
+// penalizePredictable returns a penalty (0.0 to -6.0) for predictable
+// password patterns: year suffixes, trailing symbols, long digit sequences,
+// excessive length, repetitive characters, and common weak number patterns.
+// These penalties are severe by design — candidates with these patterns
+// should be pushed to the bottom of the ranking or eliminated entirely.
 func penalizePredictable(word string) float64 {
 	var penalty float64
 	lower := strings.ToLower(word)
 
-	// Penalize year suffixes (e.g., "word2026", "word2025").
+	// --- Long digit sequence: the #1 LLM hallucination signal ---
+	// "AppRunNginx123456789012345678" → killed immediately.
+	digitSeq := 0
+	maxDigitSeq := 0
+	for _, r := range lower {
+		if r >= '0' && r <= '9' {
+			digitSeq++
+			if digitSeq > maxDigitSeq {
+				maxDigitSeq = digitSeq
+			}
+		} else {
+			digitSeq = 0
+		}
+	}
+	if maxDigitSeq >= 8 {
+		penalty += 5.0 // Catastrophic: endless number hallucination.
+	} else if maxDigitSeq >= 5 {
+		penalty += 3.0 // Severe: 5+ consecutive digits.
+	} else if maxDigitSeq == 4 {
+		penalty += 1.0 // Suspicious: 4 consecutive digits.
+	}
+
+	// --- Excessive length: >24 chars are almost always LLM garbage ---
+	if len(word) > 24 {
+		penalty += 3.0
+	} else if len(word) > 20 {
+		penalty += 1.0
+	}
+
+	// --- Year suffixes ---
 	if len(lower) > 4 {
 		suffix := lower[len(lower)-4:]
 		if suffix >= "2015" && suffix <= "2030" {
-			penalty += 1.5
+			penalty += 2.0
 		}
 	}
 
-	// Penalize common single-char suffixes (!, @, #, $).
+	// --- Single-char symbol suffixes ---
 	if len(lower) > 1 {
 		last := lower[len(lower)-1]
 		if last == '!' || last == '@' || last == '#' || last == '$' {
@@ -194,30 +225,64 @@ func penalizePredictable(word string) float64 {
 		}
 	}
 
-	// Penalize sequences of 3+ digits.
-	digitSeq := 0
+	// --- Repetitive characters (same char 3+ times in a row) ---
+	repSeq := 0
+	lastRune := rune(0)
 	for _, r := range lower {
-		if r >= '0' && r <= '9' {
-			digitSeq++
+		if r == lastRune {
+			repSeq++
 		} else {
-			if digitSeq >= 3 {
-				penalty += 0.5
+			if repSeq >= 3 {
+				penalty += 1.5
 			}
-			digitSeq = 0
+			repSeq = 1
+			lastRune = r
 		}
 	}
-	if digitSeq >= 3 {
-		penalty += 0.5
+	if repSeq >= 3 {
+		penalty += 1.5
 	}
 
-	// Penalize common weak number patterns.
-	commonNums := []string{"123", "1234", "12345", "123456", "000", "111", "222",
-		"333", "444", "555", "666", "777", "888", "999", "0000", "1111", "2222"}
+	// --- Keyboard walks: common sequences ---
+	walks := []string{
+		"qwerty", "asdfgh", "zxcvbn", "qazwsx",
+		"123456", "12345", "1234567", "12345678",
+		"abcdef", "abc123",
+	}
+	for _, w := range walks {
+		if strings.Contains(lower, w) {
+			penalty += 2.0
+			break
+		}
+	}
+
+	// --- Common weak number patterns ---
+	commonNums := []string{
+		"123", "1234", "000", "111", "222", "333", "444",
+		"555", "666", "777", "888", "999", "0000", "1111",
+	}
 	for _, num := range commonNums {
 		if strings.Contains(lower, num) {
 			penalty += 0.5
 			break
 		}
+	}
+
+	// --- All-lowercase with no digits or specials: zero complexity ---
+	hasDigit := false
+	hasSpecial := false
+	hasUpper := false
+	for _, r := range word {
+		if r >= '0' && r <= '9' {
+			hasDigit = true
+		} else if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			hasSpecial = true
+		} else if unicode.IsUpper(r) {
+			hasUpper = true
+		}
+	}
+	if !hasDigit && !hasSpecial && !hasUpper {
+		penalty += 1.0 // Pure lowercase word — too simple.
 	}
 
 	return penalty
