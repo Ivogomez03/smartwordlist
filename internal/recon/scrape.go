@@ -63,14 +63,14 @@ var headerTechKeys = map[string]string{
 
 // cookieTechPatterns maps cookie-name substrings to technology labels.
 var cookieTechPatterns = map[string]string{
-	"laravel_session":  "Laravel",
-	"wordpress":        "WordPress",
-	"wp-":              "WordPress",
-	"PHPSESSID":        "PHP",
-	"JSESSIONID":       "Java",
+	"laravel_session":   "Laravel",
+	"wordpress":         "WordPress",
+	"wp-":               "WordPress",
+	"PHPSESSID":         "PHP",
+	"JSESSIONID":        "Java",
 	"ASP.NET_SessionId": "ASP.NET",
-	"cfduid":           "Cloudflare",
-	"__cf":             "Cloudflare",
+	"cfduid":            "Cloudflare",
+	"__cf":              "Cloudflare",
 }
 
 // stopWords is a compact set of common English words filtered during
@@ -261,9 +261,26 @@ func scrapeHTML(ctx context.Context, domain string) (*scrapeResult, error) {
 	})
 
 	// ---- visit ----
+	//
+	// colly's Collector.Visit has no context awareness of its own, so a
+	// blocked/slow target would hang past --pipeline-timeout. Run it in a
+	// goroutine and race it against ctx.Done() to make cancellation actually
+	// work. c.Visit still runs to completion in the background in that case
+	// (colly offers no way to abort an in-flight request), but the caller is
+	// no longer blocked waiting for it.
 
 	url := "https://" + domain
-	cVisitErr := c.Visit(url)
+	visitDone := make(chan error, 1)
+	go func() {
+		visitDone <- c.Visit(url)
+	}()
+
+	var cVisitErr error
+	select {
+	case cVisitErr = <-visitDone:
+	case <-ctx.Done():
+		return nil, fmt.Errorf("scrape %s: %w", domain, ctx.Err())
+	}
 
 	// Prefer the status-aware error when available; colly's Visit error on
 	// HTTP failures is just "Internal Server Error" without the code.

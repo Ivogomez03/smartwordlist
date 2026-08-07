@@ -73,14 +73,14 @@ const maxLeetVariants = 200 // safety cap on combinatorial explosion
 // Mutate applies every configured mutation to word and returns a
 // deduplicated set of results.  The mutations applied are:
 //
-//	1. Original word
-//	2. Leet-substitution variants (cartesian product, capped)
-//	3. Case variants (lower, UPPER, Title) on the original word
-//	4. Original + each suffix
-//	5. Each prefix + original
-//	6. Original + each year in [start, end]
-//	7. Each case variant + each suffix
-//	8. Each case variant + each year
+//  1. Original word
+//  2. Leet-substitution variants (cartesian product, capped)
+//  3. Case variants (lower, UPPER, Title) on the original word
+//  4. Original + each suffix
+//  5. Each prefix + original
+//  6. Original + each year in [start, end]
+//  7. Each case variant + each suffix
+//  8. Each case variant + each year
 func (me *MutationEngine) Mutate(word string) []string {
 	seen := make(map[string]bool)
 	var out []string

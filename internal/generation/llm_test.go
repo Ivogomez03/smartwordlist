@@ -3,6 +3,7 @@ package generation
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/Ivogomez03/smartwordlist/pkg/types"
 )
@@ -232,6 +233,31 @@ func TestBuildPrompt_NoCodeInstructions(t *testing.T) {
 	// Must NOT contain the literal word "python" (triggers code-mode in small models).
 	if strings.Contains(prompt, "python") || strings.Contains(prompt, "Python") {
 		t.Error("prompt contains 'python' literal — risks code-generation mode")
+	}
+}
+
+// TestBuildPrompt_UnicodeCompanyName is the regression guard for a bug where
+// the few-shot example builder title-cased seed words with byte slicing
+// (s[:1] + s[1:]) instead of rune-aware slicing. For a company name whose
+// first character is a multi-byte UTF-8 rune (e.g. accented Spanish/
+// Portuguese names, or non-Latin scripts), that would cut the rune in half
+// and either panic or corrupt the string, which then got embedded directly
+// in the LLM prompt.
+func TestBuildPrompt_UnicodeCompanyName(t *testing.T) {
+	chunks := []types.ScoredChunk{
+		{Chunk: types.Chunk{Text: "company: Ñandú Barceló", Source: "company"}, Score: 1.0},
+	}
+
+	// Must not panic on multi-byte leading runes.
+	prompt := buildPrompt(chunks)
+
+	if !strings.Contains(prompt, "Ñandú") {
+		t.Errorf("prompt should preserve the original company seed 'Ñandú', got: %s", prompt)
+	}
+	// The generated example must be valid UTF-8 — corrupted byte slicing
+	// would produce an invalid encoding here.
+	if !utf8.ValidString(prompt) {
+		t.Error("prompt contains invalid UTF-8 — byte-sliced a multi-byte rune")
 	}
 }
 

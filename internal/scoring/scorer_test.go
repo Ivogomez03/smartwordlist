@@ -149,6 +149,27 @@ func TestScorer_Score_AllSameScore(t *testing.T) {
 	}
 }
 
+func TestScorer_Score_FiltersWhitespace(t *testing.T) {
+	scorer := NewScorer()
+
+	candidates := []types.Candidate{
+		{Word: "valid1", Source: "llm"},
+		{Word: "has space", Source: "llm"},
+		{Word: "has\ttab", Source: "llm"},
+		{Word: "valid2", Source: "llm"},
+	}
+
+	scored := scorer.Score(candidates)
+	if len(scored) != 2 {
+		t.Fatalf("expected 2 results after whitespace filtering, got %d: %+v", len(scored), scored)
+	}
+	for _, c := range scored {
+		if c.Word == "has space" || c.Word == "has\ttab" {
+			t.Errorf("whitespace-containing candidate %q should have been filtered out", c.Word)
+		}
+	}
+}
+
 func TestScorer_Score_ClampToTen(t *testing.T) {
 	scorer := NewScorer()
 

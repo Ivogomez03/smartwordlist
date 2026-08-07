@@ -15,11 +15,11 @@ const Version = "0.1.0"
 
 // Color palette — sqlmap-inspired.
 var (
-	successColor = lipgloss.Color("2")  // green
-	errorColor   = lipgloss.Color("1")  // red
-	warningColor = lipgloss.Color("3")  // yellow / orange
-	infoColor    = lipgloss.Color("6")  // cyan
-	bannerColor  = lipgloss.Color("6")  // cyan bold
+	successColor = lipgloss.Color("2") // green
+	errorColor   = lipgloss.Color("1") // red
+	warningColor = lipgloss.Color("3") // yellow / orange
+	infoColor    = lipgloss.Color("6") // cyan
+	bannerColor  = lipgloss.Color("6") // cyan bold
 
 	successStyle = lipgloss.NewStyle().Foreground(successColor)
 	errorStyle   = lipgloss.NewStyle().Foreground(errorColor).Bold(true)

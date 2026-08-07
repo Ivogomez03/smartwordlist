@@ -21,6 +21,8 @@ type Config struct {
 	Model string
 	// EmbedModel is the Ollama embedding model name (e.g. "nomic-embed-text").
 	EmbedModel string
+	// OllamaURL is the base URL of the Ollama server (e.g. "http://localhost:11434").
+	OllamaURL string
 	// DryRunOllama skips the pipeline and only checks Ollama health + model availability.
 	DryRunOllama bool
 }
@@ -82,6 +84,12 @@ type ScoredChunk struct {
 type Stats struct {
 	// TotalCandidates is the total number of candidates generated.
 	TotalCandidates int
+	// DeduplicatedCount is the candidate count after scoring + dedup, but
+	// BEFORE truncation to --max. Callers must set this explicitly rather
+	// than have it re-derived from the (possibly truncated) exported slice
+	// length, since TotalCandidates - len(exported) conflates "removed by
+	// dedup" with "removed by dedup AND truncated by --max".
+	DeduplicatedCount int
 	// GenerationTime is the wall-clock time for the generation phase.
 	GenerationTime time.Duration
 	// SourcesUsed lists all generator sources that contributed candidates.

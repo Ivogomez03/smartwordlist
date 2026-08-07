@@ -53,7 +53,7 @@ func enumerateDNS(ctx context.Context, domain string) ([]string, error) {
 		go func(p string) {
 			defer wg.Done()
 			host := p + "." + domain
-			if resolves(host) {
+			if resolves(ctx, host) {
 				mu.Lock()
 				found = append(found, host)
 				mu.Unlock()
@@ -76,27 +76,16 @@ func enumerateDNS(ctx context.Context, domain string) ([]string, error) {
 }
 
 // resolves returns true when a hostname resolves to at least one IP address.
-// Timeout is enforced via a wrapper net.Dialer to avoid blocking forever.
-func resolves(host string) bool {
-	// net.LookupHost does not accept a context, so we wrap it with a
-	// goroutine + channel pattern to enforce dnsTimeout.
-	type result struct {
-		addrs []string
-		err   error
-	}
+// It uses net.DefaultResolver.LookupHost, which honours the context deadline
+// natively — unlike the bare net.LookupHost, this actually aborts the
+// in-flight lookup on timeout/cancellation instead of leaking a goroutine
+// that lingers until the OS resolver eventually gives up on its own.
+func resolves(ctx context.Context, host string) bool {
+	lookupCtx, cancel := context.WithTimeout(ctx, dnsTimeout)
+	defer cancel()
 
-	ch := make(chan result, 1)
-	go func() {
-		addrs, err := net.LookupHost(host)
-		ch <- result{addrs, err}
-	}()
-
-	select {
-	case r := <-ch:
-		return r.err == nil && len(r.addrs) > 0
-	case <-time.After(dnsTimeout):
-		return false
-	}
+	addrs, err := net.DefaultResolver.LookupHost(lookupCtx, host)
+	return err == nil && len(addrs) > 0
 }
 
 // crtShLookup queries crt.sh for subdomains listed in certificate

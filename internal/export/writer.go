@@ -53,24 +53,20 @@ type jsonCandidate struct {
 // ExportJSON writes a pretty-printed JSON document containing generation
 // statistics and the full scored candidate list to w.
 //
-// The stats parameter provides pre-dedup totals.  The deduplicated count is
-// computed as stats.TotalCandidates - len(candidates).  If the result is
-// negative (e.g. when TotalCandidates was not set or the pipeline aggregated
-// counts differently) it is clamped to zero.
+// The stats parameter provides pre-dedup totals. The deduplicated count is
+// taken directly from stats.DeduplicatedCount, which callers must compute
+// BEFORE truncating to --max — deriving it from stats.TotalCandidates -
+// len(candidates) would conflate candidates removed by dedup with those
+// removed by --max truncation whenever the two differ.
 func (e *Exporter) ExportJSON(
 	candidates []types.ScoredCandidate,
 	stats types.Stats,
 	w io.Writer,
 ) error {
-	dedup := stats.TotalCandidates - len(candidates)
-	if dedup < 0 {
-		dedup = 0
-	}
-
 	payload := jsonPayload{
 		Total:            len(candidates),
 		Generated:        stats.TotalCandidates,
-		Deduplicated:     dedup,
+		Deduplicated:     stats.DeduplicatedCount,
 		GenerationTimeMs: stats.GenerationTime.Milliseconds(),
 		SourcesUsed:      stats.SourcesUsed,
 		MutationCounts:   stats.MutationCounts,

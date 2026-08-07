@@ -102,6 +102,38 @@ year_range:
 	}
 }
 
+// TestLoadRulesFile_InvertedYearRange guards against a rules file with
+// start > end silently producing zero year-based candidates with no
+// indication to the user that the range is misconfigured.
+func TestLoadRulesFile_InvertedYearRange(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "inverted_year_range.yaml")
+
+	content := `
+leet_map:
+  a:
+    - "4"
+suffixes:
+  - "123"
+prefixes:
+  - "!"
+year_range:
+  start: 2030
+  end: 2015
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadRulesFile(path)
+	if err == nil {
+		t.Fatal("expected error for inverted year_range (start > end), got nil")
+	}
+	if !strings.Contains(err.Error(), "year_range") {
+		t.Errorf("expected 'year_range' mention in error, got: %v", err)
+	}
+}
+
 func TestLoadRulesFile_UnknownKeysWarning(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "unknown_keys.yaml")

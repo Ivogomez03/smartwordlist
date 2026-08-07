@@ -14,6 +14,7 @@
 //	    --json            JSON metadata output path (default: <output>.json, empty = no JSON)
 //	    --model           Ollama LLM model name (default: qwen3:0.6b, env: SMARTWORDLIST_MODEL)
 //	    --embedding-model Ollama embedding model name (default: nomic-embed-text, env: SMARTWORDLIST_EMBED_MODEL)
+//	    --ollama-url      Ollama server base URL (default: http://localhost:11434, env: SMARTWORDLIST_OLLAMA_URL)
 //	    --dry-run-ollama  Check Ollama health and model availability, then exit
 package main
 
@@ -87,6 +88,7 @@ func init() {
 	rootCmd.Flags().Bool("no-llm", false, "Disable LLM-enhanced generation (rule-only mode)")
 	rootCmd.Flags().StringP("rules", "r", "defaults/rules.yaml", "Path to mutation rules YAML file")
 	rootCmd.Flags().String("json", "", "JSON metadata output path (default: <output>.json if --output set)")
+	rootCmd.Flags().String("ollama-url", envOrDefault("SMARTWORDLIST_OLLAMA_URL", defaultOllamaURL), "Ollama server base URL")
 	rootCmd.Flags().String("model", envOrDefault("SMARTWORDLIST_MODEL", defaultOllamaModel), "Ollama LLM model name")
 	rootCmd.Flags().String("embedding-model", envOrDefault("SMARTWORDLIST_EMBED_MODEL", defaultEmbedModel), "Ollama embedding model name")
 	rootCmd.Flags().Bool("dry-run-ollama", false, "Check Ollama health and model availability, then exit")
@@ -106,6 +108,7 @@ func run(cmd *cobra.Command, args []string) error {
 	noLLM, _ := cmd.Flags().GetBool("no-llm")
 	rulesPath, _ := cmd.Flags().GetString("rules")
 	jsonPath, _ := cmd.Flags().GetString("json")
+	ollamaURL, _ := cmd.Flags().GetString("ollama-url")
 	modelName, _ := cmd.Flags().GetString("model")
 	embedModel, _ := cmd.Flags().GetString("embedding-model")
 	dryRunOllama, _ := cmd.Flags().GetBool("dry-run-ollama")
@@ -137,15 +140,16 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	cfg := &types.Config{
-		Domain:        domain,
-		Output:        output,
-		Max:           max,
-		Verbose:       verbose,
-		NoLLM:         noLLM,
-		RulesPath:     rulesPath,
-		Model:         modelName,
-		EmbedModel:    embedModel,
-		DryRunOllama:  dryRunOllama,
+		Domain:       domain,
+		Output:       output,
+		Max:          max,
+		Verbose:      verbose,
+		NoLLM:        noLLM,
+		RulesPath:    rulesPath,
+		Model:        modelName,
+		EmbedModel:   embedModel,
+		OllamaURL:    ollamaURL,
+		DryRunOllama: dryRunOllama,
 	}
 
 	// ---- domain validation (W3) ----
@@ -170,7 +174,7 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 	if cfg.Verbose {
 		fmt.Println(cli.Info("Verbose mode enabled"))
-		fmt.Println(cli.Info(fmt.Sprintf("LLM model: %s | Embed model: %s", cfg.Model, cfg.EmbedModel)))
+		fmt.Println(cli.Info(fmt.Sprintf("LLM model: %s | Embed model: %s | Ollama URL: %s", cfg.Model, cfg.EmbedModel, cfg.OllamaURL)))
 	}
 	fmt.Println(cli.Info(fmt.Sprintf("Rules file: %s", cfg.RulesPath)))
 
@@ -191,7 +195,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// ---- Ollama client init ----
 
-	ollamaClient := ollama.NewClient(defaultOllamaURL, ollamaTimeout)
+	ollamaClient := ollama.NewClient(cfg.OllamaURL, ollamaTimeout)
 
 	// ---- dry-run-ollama (W4) ----
 
@@ -322,9 +326,7 @@ func run(cmd *cobra.Command, args []string) error {
 				candidates, reconResult, mutEngine, dicts, max, verbose,
 			)
 			// Merge sources from generation stage.
-			for _, s := range sourcesUsed {
-				allSources = append(allSources, s)
-			}
+			allSources = append(allSources, sourcesUsed...)
 			enrichedCh <- enrichedResult{
 				candidates:     enriched,
 				sources:        allSources,
@@ -375,6 +377,11 @@ func run(cmd *cobra.Command, args []string) error {
 		return len(deduped[i].Word) > len(deduped[j].Word)
 	})
 
+	// Capture the true post-dedup count BEFORE truncating to --max, so the
+	// JSON metadata's "deduplicated" figure reflects dedup alone rather than
+	// conflating it with candidates dropped by truncation.
+	dedupedCount := len(deduped)
+
 	// Truncate to --max
 	if max > 0 && len(deduped) > max {
 		deduped = deduped[:max]
@@ -397,9 +404,10 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	stats := types.Stats{
-		TotalCandidates: totalRaw,
-		GenerationTime:  time.Since(startTime),
-		SourcesUsed:     uniqueSources,
+		TotalCandidates:   totalRaw,
+		DeduplicatedCount: dedupedCount,
+		GenerationTime:    time.Since(startTime),
+		SourcesUsed:       uniqueSources,
 		MutationCounts: map[string]int{
 			"mutated": enriched.mutationCount,
 			"combos":  enriched.comboCount,
@@ -416,7 +424,6 @@ func run(cmd *cobra.Command, args []string) error {
 			close(doneCh)
 			return fmt.Errorf("create output file %s: %w", output, err)
 		}
-		defer textFile.Close()
 		textWriter = textFile
 		phaseCh <- "Exporting"
 	}
@@ -424,6 +431,14 @@ func run(cmd *cobra.Command, args []string) error {
 	if err := exporter.ExportText(deduped, textWriter); err != nil {
 		close(doneCh)
 		return fmt.Errorf("export text: %w", err)
+	}
+	// Close (not defer) so a flush failure — e.g. disk full — surfaces as an
+	// error instead of silently leaving a truncated wordlist on disk.
+	if textFile != nil {
+		if err := textFile.Close(); err != nil {
+			close(doneCh)
+			return fmt.Errorf("close output file %s: %w", output, err)
+		}
 	}
 
 	// JSON output
@@ -433,7 +448,10 @@ func run(cmd *cobra.Command, args []string) error {
 		if jsonPath == "stdout" || jsonPath == "-" {
 			jsonWriter = os.Stdout
 			if output == "" {
-				fmt.Fprintln(os.Stdout, "\n--- JSON ---")
+				if _, err := fmt.Fprintln(os.Stdout, "\n--- JSON ---"); err != nil {
+					close(doneCh)
+					return fmt.Errorf("write JSON separator: %w", err)
+				}
 			}
 		} else {
 			jsonFile, err = os.Create(jsonPath)
@@ -441,13 +459,18 @@ func run(cmd *cobra.Command, args []string) error {
 				close(doneCh)
 				return fmt.Errorf("create JSON file %s: %w", jsonPath, err)
 			}
-			defer jsonFile.Close()
 			jsonWriter = jsonFile
 		}
 
 		if err := exporter.ExportJSON(deduped, stats, jsonWriter); err != nil {
 			close(doneCh)
 			return fmt.Errorf("export JSON: %w", err)
+		}
+		if jsonFile != nil {
+			if err := jsonFile.Close(); err != nil {
+				close(doneCh)
+				return fmt.Errorf("close JSON file %s: %w", jsonPath, err)
+			}
 		}
 		if verbose {
 			fmt.Println(cli.Info(fmt.Sprintf("JSON export: %s", jsonPath)))
@@ -496,7 +519,7 @@ func runDryRunOllama(ctx context.Context, client *ollama.Client, cfg *types.Conf
 
 	if err := client.Health(ctx); err != nil {
 		fmt.Println(cli.Error(fmt.Sprintf("Ollama health check FAILED: %v", err)))
-		fmt.Println(cli.Warning("Make sure Ollama is running at " + defaultOllamaURL))
+		fmt.Println(cli.Warning("Make sure Ollama is running at " + cfg.OllamaURL))
 		return fmt.Errorf("ollama health check failed: %w", err)
 	}
 	fmt.Println(cli.Success("Ollama server: AVAILABLE"))
@@ -804,7 +827,7 @@ func extractContextWords(r *types.ReconResult) []string {
 	// Split company name into individual words.
 	for _, part := range strings.Fields(r.Company) {
 		part = strings.ToLower(strings.TrimSpace(part))
-		if len(part) > 2 && !isJunkWord(part) {
+		if len(part) > 2 && !generation.IsJunkWord(part) {
 			words = append(words, part)
 		}
 	}
@@ -813,7 +836,7 @@ func extractContextWords(r *types.ReconResult) []string {
 	for _, kw := range r.Keywords {
 		kw = strings.ToLower(strings.TrimSpace(kw))
 		// Skip domain-like keywords — they produce junk passwords.
-		if len(kw) > 2 && !isJunkWord(kw) && !strings.Contains(kw, ".") {
+		if len(kw) > 2 && !generation.IsJunkWord(kw) && !strings.Contains(kw, ".") {
 			words = append(words, kw)
 		}
 	}
@@ -821,42 +844,11 @@ func extractContextWords(r *types.ReconResult) []string {
 	for _, sd := range r.Subdomains {
 		prefix, _, _ := strings.Cut(sd, ".")
 		prefix = strings.ToLower(strings.TrimSpace(prefix))
-		if prefix != "" && prefix != "www" && len(prefix) > 2 && !isJunkWord(prefix) {
+		if prefix != "" && prefix != "www" && len(prefix) > 2 && !generation.IsJunkWord(prefix) {
 			words = append(words, prefix)
 		}
 	}
 	return dedupeStrings(words)
-}
-
-// isJunkWord returns true for words that are too generic to be useful
-// as password base words.
-func isJunkWord(w string) bool {
-	junk := map[string]bool{
-		"the": true, "and": true, "for": true, "new": true, "all": true,
-		"our": true, "its": true, "has": true, "are": true, "was": true,
-		"can": true, "not": true, "you": true, "your": true, "from": true,
-		"that": true, "this": true, "with": true, "have": true, "been": true,
-		"will": true, "more": true, "page": true, "home": true, "site": true,
-		"need": true, "run": true, "app": true, "api": true, "use": true,
-		"get": true, "one": true, "two": true, "see": true, "now": true,
-		"com": true, "org": true, "net": true, "www": true,
-		"enable": true, "javascript": true, "cookie": true, "function": true,
-	}
-	return junk[strings.ToLower(strings.TrimSpace(w))]
-}
-
-// cleanTechWord strips version numbers and common prefixes from technology names.
-func cleanTechWord(t string) string {
-	t = strings.TrimSpace(t)
-	// Strip version numbers: "nginx/1.24" → "nginx", "jquery/3.7" → "jquery"
-	if idx := strings.Index(t, "/"); idx > 0 {
-		t = t[:idx]
-	}
-	// Split compound tech names: "Google Analytics" → "google", "analytics"
-	// Return the first meaningful word.
-	t = strings.SplitN(t, " ", 2)[0]
-	t = strings.SplitN(t, "/", 2)[0]
-	return strings.ToLower(strings.TrimSpace(t))
 }
 
 // buildQueryText creates a search query from the most relevant recon fields.
@@ -873,10 +865,10 @@ func buildQueryText(r *types.ReconResult) string {
 		if len(kw) > 10 {
 			kw = kw[:10]
 		}
-		parts = append(parts, "Keywords: "+joinStrings(kw, ", "))
+		parts = append(parts, "Keywords: "+strings.Join(kw, ", "))
 	}
 	parts = append(parts, "wordlist generation password candidates")
-	return joinStrings(parts, " | ")
+	return strings.Join(parts, " | ")
 }
 
 // vecliteCacheDir returns the XDG-compatible cache directory.
@@ -947,10 +939,7 @@ func isJunkCandidate(w string) bool {
 			break
 		}
 	}
-	if !hasLetter {
-		return true
-	}
-	return false
+	return !hasLetter
 }
 
 // hasLongDigitSeq returns true when s contains 5 or more consecutive digits.
@@ -977,15 +966,4 @@ func isAllDigitsStr(s string) bool {
 		}
 	}
 	return len(s) > 0
-}
-
-func joinStrings(ss []string, sep string) string {
-	result := ""
-	for i, s := range ss {
-		if i > 0 {
-			result += sep
-		}
-		result += s
-	}
-	return result
 }

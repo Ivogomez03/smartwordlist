@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/abdul-hamid-achik/veclite"
 	"github.com/Ivogomez03/smartwordlist/pkg/types"
+	"github.com/abdul-hamid-achik/veclite"
 )
 
 // VecliteStore wraps the veclite embedded vector database for chunk storage

@@ -36,23 +36,23 @@ func TestMutationEngine_Mutate_Leet(t *testing.T) {
 			wantAnyOf: []string{"admin"},
 		},
 		{
-			name:     "case variations include Title Case",
-			input:    "acme",
+			name:      "case variations include Title Case",
+			input:     "acme",
 			wantAnyOf: []string{"Acme", "ACME", "acme"},
 		},
 		{
-			name:     "suffix appended to original",
-			input:    "acme",
+			name:      "suffix appended to original",
+			input:     "acme",
 			wantAnyOf: []string{"acme123"},
 		},
 		{
-			name:     "year appended to original",
-			input:    "acme",
+			name:      "year appended to original",
+			input:     "acme",
 			wantAnyOf: []string{"acme2026", "acme2025"},
 		},
 		{
-			name:     "prefix prepended to original",
-			input:    "acme",
+			name:      "prefix prepended to original",
+			input:     "acme",
 			wantAnyOf: []string{"admin_acme"},
 		},
 	}

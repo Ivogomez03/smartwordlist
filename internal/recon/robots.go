@@ -17,13 +17,13 @@ const robotsTimeout = 10 * time.Second
 // sitemapIndex is a minimal XML structure for parsing sitemap index files
 // that list child sitemaps.
 type sitemapIndex struct {
-	XMLName xml.Name       `xml:"sitemapindex"`
-	Sitemaps []sitemapLoc  `xml:"sitemap"`
+	XMLName  xml.Name     `xml:"sitemapindex"`
+	Sitemaps []sitemapLoc `xml:"sitemap"`
 }
 
 // urlSet is a minimal XML structure for a standard urlset sitemap.
 type urlSet struct {
-	XMLName xml.Name  `xml:"urlset"`
+	XMLName xml.Name     `xml:"urlset"`
 	URLs    []sitemapLoc `xml:"url"`
 }
 

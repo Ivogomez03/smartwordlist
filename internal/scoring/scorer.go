@@ -58,7 +58,7 @@ func (s *Scorer) Score(candidates []types.Candidate) []types.ScoredCandidate {
 	}
 
 	out := make([]types.ScoredCandidate, 0, len(filtered))
-	for _, c := range candidates {
+	for _, c := range filtered {
 		sc := s.computeScore(c)
 		out = append(out, types.ScoredCandidate{
 			Word:   c.Word,

@@ -24,10 +24,6 @@ var knownRuleKeys = map[string]bool{
 	"case_variations": true,
 }
 
-// requiredRuleKeys lists keys that MUST be present and non-empty in a valid
-// rules file.
-var requiredRuleKeys = []string{"leet_map", "suffixes", "prefixes", "year_range"}
-
 // LoadRulesFile loads mutation rules from a YAML (.yaml, .yml) or TOML
 // (.toml) file.  The file extension determines the parser; unknown
 // extensions produce an error.
@@ -129,6 +125,11 @@ func validateRules(rules *generation.MutationRules, path string) error {
 	if rules.YearRange.Start == 0 && rules.YearRange.End == 0 {
 		return fmt.Errorf(
 			"plugin: missing or empty required field %q in %s", "year_range", path)
+	}
+	if rules.YearRange.Start > rules.YearRange.End {
+		return fmt.Errorf(
+			"plugin: invalid %q in %s: start (%d) is after end (%d)",
+			"year_range", path, rules.YearRange.Start, rules.YearRange.End)
 	}
 	return nil
 }

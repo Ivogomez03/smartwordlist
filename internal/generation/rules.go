@@ -94,14 +94,14 @@ func (rg *RuleGenerator) collectWords() []string {
 	add(r.Company)
 	// Also split multi-word company names into individual tokens.
 	for _, part := range strings.Fields(r.Company) {
-		if len(part) > 2 && !isJunkWord(part) {
+		if len(part) > 2 && !IsJunkWord(part) {
 			add(part)
 		}
 	}
 	// Technologies are NOT used as base words — they're context for the LLM,
 	// not something people put in passwords.
 	for _, k := range r.Keywords {
-		if !isJunkWord(k) {
+		if !IsJunkWord(k) {
 			add(k)
 		}
 	}
@@ -141,10 +141,16 @@ func cleanWord(s string) string {
 	return s
 }
 
-// isJunkWord returns true for words that are too generic to be useful
+// IsJunkWord returns true for words that are too generic to be useful
 // as password base words. This includes common English function words,
 // tech noise, and web boilerplate terms scraped from pages.
-func isJunkWord(w string) bool {
+//
+// This is the single shared junk-word list used across both the rule
+// generator (base words for mutation) and the combo/context-word extraction
+// in cmd/smartwordlist — previously each had its own near-duplicate list
+// that drifted independently, so the same recon data could be filtered
+// inconsistently depending on which code path processed it.
+func IsJunkWord(w string) bool {
 	w = strings.ToLower(w)
 	junk := map[string]bool{
 		"the": true, "and": true, "for": true, "new": true, "all": true,

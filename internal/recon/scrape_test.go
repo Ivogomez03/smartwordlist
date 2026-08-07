@@ -3,10 +3,12 @@ package recon
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // testTransport returns an http.RoundTripper that rewrites all requests to
@@ -205,6 +207,40 @@ func TestScrapeHTML_NoContent(t *testing.T) {
 	}
 	if result.Company != "" {
 		t.Errorf("Company should be empty, got %q", result.Company)
+	}
+}
+
+// TestScrapeHTML_HonoursContextCancellation is the regression guard for a
+// bug where scrapeHTML accepted a context.Context but never actually used it
+// to bound colly's Visit call, so a slow/unresponsive target would hang past
+// --pipeline-timeout regardless of the configured deadline.
+func TestScrapeHTML_HonoursContextCancellation(t *testing.T) {
+	unblock := make(chan struct{})
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-unblock // hang until the test explicitly releases it
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+	defer close(unblock)
+
+	scrapeTransport = testTransport(ts)
+	defer func() { scrapeTransport = nil }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := scrapeHTML(ctx, "slow.example.com")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected an error when the context deadline is exceeded")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected error to wrap context.DeadlineExceeded, got: %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("scrapeHTML should return promptly on context cancellation, took %v", elapsed)
 	}
 }
 

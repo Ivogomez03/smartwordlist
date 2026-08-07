@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/Ivogomez03/smartwordlist/internal/ollama"
 	"github.com/Ivogomez03/smartwordlist/pkg/types"
@@ -91,12 +92,12 @@ type passwordsResponse struct {
 //     and deterministic dedup (first-seen, lowercased key, preserves original
 //     casing).
 //
-//	2. FALLBACK (line scan): only if JSON yields nothing. Split on newlines
-//	   and route every line through cleanLine + isValidCandidate. We do NOT
-//	   skip fenced code blocks: when a model ignores the schema it often
-//	   embeds the real password guesses inside a fenced "Output:" demo block,
-//	   and we want to RECOVER those while isValidCandidate rejects the code.
-//	   splitOnWordBoundaries is the last resort.
+//  2. FALLBACK (line scan): only if JSON yields nothing. Split on newlines
+//     and route every line through cleanLine + isValidCandidate. We do NOT
+//     skip fenced code blocks: when a model ignores the schema it often
+//     embeds the real password guesses inside a fenced "Output:" demo block,
+//     and we want to RECOVER those while isValidCandidate rejects the code.
+//     splitOnWordBoundaries is the last resort.
 func extractCandidates(text string, max int) []types.Candidate {
 	// ---- Primary: JSON ----
 	if candidates := extractJSONCandidates(text, max); len(candidates) > 0 {
@@ -258,7 +259,7 @@ var programmingNoise = map[string]bool{
 
 // codeSyntaxChars are code-structure characters that never appear in real
 // passwords. Password symbols (!@#$%^&*+_-./ and digits/letters) are ALLOWED.
-var codeSyntaxChars = []byte{'(' , ')', '[', ']', '{', '}', '=', ':', ',', ';', '"', '\'', '`'}
+var codeSyntaxChars = []byte{'(', ')', '[', ']', '{', '}', '=', ':', ',', ';', '"', '\'', '`'}
 
 // isValidCandidate returns true when w passes all structural and semantic
 // filters and is a plausible password candidate.
@@ -453,7 +454,7 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(`"` + s + `2024!", "` + s + strings.ToUpper(s[:1]) + s[1:] + `#24"`)
+			b.WriteString(`"` + s + `2024!", "` + s + titleFirst(s) + `#24"`)
 			// Add cross-seed and varied examples.
 			if i < len(seeds)-1 {
 				s2 := seeds[i+1]
@@ -467,6 +468,18 @@ func buildPrompt(chunks []types.ScoredChunk) string {
 	b.WriteString("Output ONLY the JSON object. No code. No explanation. No markdown. No prose.\n")
 
 	return b.String()
+}
+
+// titleFirst upper-cases the first rune of s and leaves the rest unchanged.
+// Unlike a byte slice (s[:1] + s[1:]), this is safe for multi-byte UTF-8
+// leading characters (e.g. accented or non-Latin company names) — slicing by
+// byte would otherwise cut a rune in half and corrupt the string.
+func titleFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	r, size := utf8.DecodeRuneInString(s)
+	return string(unicode.ToUpper(r)) + s[size:]
 }
 
 // extractValue strips the "section: " prefix that the chunker prepends.
